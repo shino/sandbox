@@ -25,7 +25,7 @@ import sys, os
 
 # Add any Sphinx extension module names here, as strings. They can be extensions
 # coming with Sphinx (named 'sphinx.ext.*') or your custom ones.
-extensions = ['sphinxtogithub']
+extensions = ['sphinxcontrib.googleanalytics', 'sphinxtogithub']
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -243,3 +243,6 @@ texinfo_documents = [
 # Sphinx to Github
 sphinx_to_github = True
 sphinx_to_github_verbose = True
+
+# Google Analytics
+googleanalytics_id = 'UA-1866747-6'
