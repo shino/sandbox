@@ -4,3 +4,4 @@
 gh コマンドのテスト
 
 treeless mirror fetch テスト
+bare fetch テスト
