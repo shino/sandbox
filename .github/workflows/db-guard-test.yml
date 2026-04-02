@@ -11,6 +11,10 @@ on:
         description: "Override after DB digest for guard (empty = use freshly built DB)"
         type: string
         default: ""
+      force_push:
+        description: "Push DB even if guard fails (operator reviewed report and confirmed OK)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -146,6 +150,13 @@ jobs:
 
       # --- Publish (to shino's own GHCR namespace for testing) ---
       - name: Push vuls.db to GHCR (test)
-        if: inputs.guard_after_digest == '' && steps.guard_diffdb.outcome != 'failure' && steps.guard_db.outcome != 'failure'
+        if: |
+          inputs.guard_after_digest == '' && (
+            inputs.force_push ||
+            (steps.guard_diffdb.outcome != 'failure' && steps.guard_db.outcome != 'failure')
+          )
         run: |
+          if [ "${{ inputs.force_push }}" = "true" ]; then
+            echo "::warning::force_push=true — publishing despite guard outcome"
+          fi
           vuls db push --force --token ${{ secrets.GITHUB_TOKEN }} ghcr.io/shino/sandbox-vuls-db:test ./vuls.db.zst
