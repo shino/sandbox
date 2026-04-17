@@ -28,7 +28,7 @@ jobs:
           cache: false
 
       - name: Install vuls
-        run: go install github.com/MaineK00n/vuls2/cmd/vuls@nightly
+        run: go install github.com/MaineK00n/vuls2/cmd/vuls@shino/diff-guard
 
       # Skip the real db-build (fetch/extract/add) for this smoke test; an empty
       # `vuls db init` is enough to exercise the diff flow.
