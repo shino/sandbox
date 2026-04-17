@@ -37,7 +37,7 @@ jobs:
 
       # --- BEGIN: logic to paste between "Compact vuls.db" and "Upload vuls.db..." in db-nightly.yml ---
       - name: Fetch baseline vuls.db from ghcr.io/vulsio/vuls-nightly-db
-        run: vuls db fetch --dbpath ./baseline.db --repository ghcr.io/vulsio/vuls-nightly-db:nightly
+        run: vuls db fetch --dbpath ./baseline.db --repository ghcr.io/vulsio/vuls-nightly-db:nightly --no-progress
 
       - name: Diff vuls.db against baseline
         run: |
