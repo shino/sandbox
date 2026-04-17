@@ -1,0 +1,51 @@
+name: DB Guard Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      change_rate_threshold:
+        description: "Change rate (%) threshold per ecosystem; diff fails if exceeded"
+        required: false
+        default: "10"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build vuls.db
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-latest
+    env:
+      GOEXPERIMENT: jsonv2
+    steps:
+      - name: Set up Go 1.x
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: "stable"
+          cache: false
+
+      - name: Install vuls
+        run: go install github.com/MaineK00n/vuls2/cmd/vuls@nightly
+
+      # Skip the real db-build (fetch/extract/add) for this smoke test; an empty
+      # `vuls db init` is enough to exercise the diff flow.
+      - name: Build DB (init only for test)
+        run: vuls db init --dbpath ./vuls.db
+
+      # --- BEGIN: logic to paste between "Compact vuls.db" and "Upload vuls.db..." in db-nightly.yml ---
+      - name: Fetch baseline vuls.db from ghcr.io/vulsio/vuls-nightly-db
+        run: vuls db fetch --dbpath ./baseline.db --repository ghcr.io/vulsio/vuls-nightly-db:nightly
+
+      - name: Diff vuls.db against baseline
+        run: |
+          set -o pipefail
+          vuls diff db ./baseline.db ./vuls.db \
+            --change-rate-threshold ${{ inputs.change_rate_threshold }} \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      # --- END: logic to paste between "Compact vuls.db" and "Upload vuls.db..." in db-nightly.yml ---
+
+      - name: Upload vuls.db to ghcr.io/vulsio/vuls-nightly-db (dummy for test)
+        run: echo "dummy publish"
