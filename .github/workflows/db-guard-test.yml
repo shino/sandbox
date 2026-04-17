@@ -31,10 +31,11 @@ jobs:
         # go install does not accept branch names with '/'; pin to a commit SHA on shino/diff-guard.
         run: go install github.com/MaineK00n/vuls2/cmd/vuls@54b3fbb9810e7739cce3b7251a58c2cc29ccb383
 
-      # Skip the real db-build (fetch/extract/add) for this smoke test; an empty
-      # `vuls db init` is enough to exercise the diff flow.
-      - name: Build DB (init only for test)
-        run: vuls db init --dbpath ./vuls.db
+      # Skip the real db-build (fetch/extract/add) for this smoke test; pull an
+      # existing nightly DB so `vuls diff detection` has something to read.
+      # In production this is replaced with the freshly built ./vuls.db.
+      - name: Fetch target vuls.db (stand-in for db-build output)
+        run: vuls db fetch --dbpath ./vuls.db --repository ghcr.io/vulsio/vuls-nightly-db:nightly --no-progress
 
       # --- BEGIN: logic to paste between "Compact vuls.db" and "Upload vuls.db..." in db-nightly.yml ---
       - name: Fetch baseline vuls.db from ghcr.io/vulsio/vuls-nightly-db
