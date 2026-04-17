@@ -54,11 +54,11 @@ jobs:
           head -n 100 ./diff-report.md >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
 
-      # vuls0 (future-architect/vuls) main HEAD is used as the scanner binary
+      # vuls0 (future-architect/vuls) master HEAD is used as the scanner binary
       # for both DBs to isolate DB-induced detection differences.
-      - name: Install vuls0 (future-architect/vuls main)
+      - name: Install vuls0 (future-architect/vuls master)
         run: |
-          go install github.com/future-architect/vuls/cmd/vuls@main
+          go install github.com/future-architect/vuls/cmd/vuls@master
           mv "$(go env GOPATH)/bin/vuls" "$(go env GOPATH)/bin/vuls0"
 
       - name: Prepare scan results (vuls2-supported families only)
