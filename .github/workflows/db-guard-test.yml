@@ -42,15 +42,19 @@ jobs:
 
       - name: Diff vuls.db against baseline
         run: |
-          set -o pipefail
+          # Capture exit code so the summary is written even on threshold breach.
+          set +e
           vuls diff db ./baseline.db ./vuls.db \
             --change-rate-threshold ${{ inputs.change_rate_threshold }} \
             | tee ./diff-report.md
+          rc=${PIPESTATUS[0]}
+          set -e
           # $GITHUB_STEP_SUMMARY is capped at 1 MiB; strip the verbose
           # "## Details" section (per-ecosystem ID lists) and hard-cap at 900 KiB.
           awk '/^## Details /{exit} {print}' ./diff-report.md \
             | head -c 900000 \
             >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
       # --- END: logic to paste between "Compact vuls.db" and "Upload vuls.db..." in db-nightly.yml ---
 
       - name: Upload vuls.db to ghcr.io/vulsio/vuls-nightly-db (dummy for test)
