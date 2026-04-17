@@ -3,160 +3,49 @@ name: DB Guard Test
 on:
   workflow_dispatch:
     inputs:
-      guard_before_digest:
-        description: "Override before DB digest for guard (empty = fetch GHCR nightly)"
-        type: string
-        default: ""
-      guard_after_digest:
-        description: "Override after DB digest for guard (empty = use freshly built DB)"
-        type: string
-        default: ""
-      force_push:
-        description: "Push DB even if guard fails (operator reviewed report and confirmed OK)"
-        type: boolean
-        default: false
+      change_rate_threshold:
+        description: "Change rate (%) threshold per ecosystem; diff fails if exceeded"
+        required: false
+        default: "10"
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: build & guard vuls.db
+    name: build vuls.db
     permissions:
       contents: read
-      packages: write
+      packages: read
     runs-on: ubuntu-latest
     env:
       GOEXPERIMENT: jsonv2
     steps:
-      - name: Maximize build space
-        uses: AdityaGarg8/remove-unwanted-software@90e01b21170618765a73370fcc3abbd1684a7793 # v5
-        with:
-          remove-dotnet: "true"
-          remove-android: "true"
-          remove-haskell: "true"
-          remove-codeql: "true"
-          remove-docker-images: "true"
-          remove-large-packages: "true"
-          remove-cached-tools: "true"
-          remove-swapfile: "true"
-
-      - name: Check out code into the Go module directory
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
       - name: Set up Go 1.x
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version: "stable"
           cache: false
 
-      - name: Install Dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq zstd
-
-      - name: Install vuls-data-update
-        run: go install github.com/MaineK00n/vuls-data-update/cmd/vuls-data-update@nightly
-
-      # NOTE: Install from shino/diff-guard branch until PR #342 is merged to nightly.
-      # After merge, change to: go install github.com/MaineK00n/vuls2/cmd/vuls@nightly
       - name: Install vuls
-        run: go install github.com/MaineK00n/vuls2/cmd/vuls@shino/diff-guard
+        run: go install github.com/MaineK00n/vuls2/cmd/vuls@nightly
 
-      - name: Install vuls0
+      # Skip the real db-build (fetch/extract/add) for this smoke test; an empty
+      # `vuls db init` is enough to exercise the diff flow.
+      - name: Build DB (init only for test)
+        run: vuls db init --dbpath ./vuls.db
+
+      # --- BEGIN: logic to paste between "Compact vuls.db" and "Upload vuls.db..." in db-nightly.yml ---
+      - name: Fetch baseline vuls.db from ghcr.io/vulsio/vuls-nightly-db
+        run: vuls db fetch --dbpath ./baseline.db --repository ghcr.io/vulsio/vuls-nightly-db:nightly
+
+      - name: Diff vuls.db against baseline
         run: |
-          GOBIN=$(pwd) go install github.com/future-architect/vuls/cmd/vuls@latest
-          mv vuls vuls0
+          set -o pipefail
+          vuls diff db ./baseline.db ./vuls.db \
+            --change-rate-threshold ${{ inputs.change_rate_threshold }} \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      # --- END: logic to paste between "Compact vuls.db" and "Upload vuls.db..." in db-nightly.yml ---
 
-      # --- Normal DB build (skipped when override digest is provided) ---
-      - name: Build DB
-        if: inputs.guard_after_digest == ''
-        run: make -f db-guard-test.mk db-build BRANCH=nightly DBPATH=./vuls.db
-
-      - name: Compact vuls.db
-        if: inputs.guard_after_digest == ''
-        run: vuls db compress --dbpath ./vuls.db
-
-      # --- Guard: fetch before DB ---
-      - name: Fetch before DB (override digest)
-        if: inputs.guard_before_digest != ''
-        run: vuls db fetch --dbpath ./before.db --repository "ghcr.io/vulsio/vuls-nightly-db@${GUARD_BEFORE_DIGEST}"
-        env:
-          GUARD_BEFORE_DIGEST: ${{ inputs.guard_before_digest }}
-
-      - name: Fetch before DB (GHCR nightly)
-        if: inputs.guard_before_digest == '' && inputs.guard_after_digest == ''
-        run: vuls db fetch --dbpath ./before.db --repository ghcr.io/vulsio/vuls-nightly-db:nightly || echo "::warning::Failed to fetch nightly DB, skipping guard"
-
-      # --- Guard: fetch after DB (override only) ---
-      - name: Fetch after DB (override digest)
-        if: inputs.guard_after_digest != ''
-        run: vuls db fetch --dbpath ./vuls.db --repository "ghcr.io/vulsio/vuls-nightly-db@${GUARD_AFTER_DIGEST}"
-        env:
-          GUARD_AFTER_DIGEST: ${{ inputs.guard_after_digest }}
-
-      # --- Guard: diff-db (DB-only, no scan results needed) ---
-      - name: Guard - diff-db
-        id: guard_diffdb
-        if: hashFiles('before.db') != ''
-        continue-on-error: true
-        run: |
-          vuls db guard diff-db \
-            --baseline-dbpath ./before.db \
-            --dbpath ./vuls.db \
-            --threshold 10 \
-            --output guard-diffdb-report.md
-
-      # --- Guard: db (detection-based, needs scan results + vuls0) ---
-      - name: Checkout integration scan results
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          repository: future-architect/vuls
-          path: vuls-src
-          sparse-checkout: integration/data/results
-          sparse-checkout-cone-mode: false
-
-      - name: Guard - DB
-        id: guard_db
-        if: hashFiles('before.db') != ''
-        continue-on-error: true
-        run: |
-          vuls db guard db \
-            --vuls0-binary ./vuls0 \
-            --baseline-dbpath ./before.db \
-            --dbpath ./vuls.db \
-            --threshold 10 \
-            --output guard-db-report.md \
-            ./vuls-src/integration/data/results/
-
-      # --- Guard summary ---
-      - name: Write guard reports to job summary
-        if: always()
-        run: |
-          for f in guard-diffdb-report.md guard-db-report.md; do
-            if [ -f "$f" ]; then
-              cat "$f" >> "$GITHUB_STEP_SUMMARY"
-              echo "" >> "$GITHUB_STEP_SUMMARY"
-            fi
-          done
-
-      - name: Upload guard reports
-        if: always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
-        with:
-          name: guard-reports
-          path: |
-            guard-diffdb-report.md
-            guard-db-report.md
-          if-no-files-found: ignore
-
-      # --- Publish (to shino's own GHCR namespace for testing) ---
-      - name: Push vuls.db to GHCR (test)
-        if: |
-          inputs.guard_after_digest == '' && (
-            inputs.force_push ||
-            (steps.guard_diffdb.outcome != 'failure' && steps.guard_db.outcome != 'failure')
-          )
-        run: |
-          if [ "${{ inputs.force_push }}" = "true" ]; then
-            echo "::warning::force_push=true — publishing despite guard outcome"
-          fi
-          vuls db push --force --token ${{ secrets.GITHUB_TOKEN }} ghcr.io/shino/sandbox-vuls-db:test ./vuls.db.zst
+      - name: Upload vuls.db to ghcr.io/vulsio/vuls-nightly-db (dummy for test)
+        run: echo "dummy publish"
