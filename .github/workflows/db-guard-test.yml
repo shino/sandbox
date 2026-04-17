@@ -56,10 +56,14 @@ jobs:
 
       # vuls0 (future-architect/vuls) master HEAD is used as the scanner binary
       # for both DBs to isolate DB-induced detection differences.
+      # Install into a dedicated GOBIN so it doesn't clobber the vuls2 `vuls`
+      # binary (both modules produce a binary named `vuls`).
       - name: Install vuls0 (future-architect/vuls master)
         run: |
-          go install github.com/future-architect/vuls/cmd/vuls@master
-          mv "$(go env GOPATH)/bin/vuls" "$(go env GOPATH)/bin/vuls0"
+          mkdir -p /tmp/vuls0-bin
+          GOBIN=/tmp/vuls0-bin go install github.com/future-architect/vuls/cmd/vuls@master
+          mv /tmp/vuls0-bin/vuls /tmp/vuls0-bin/vuls0
+          echo "VULS0=/tmp/vuls0-bin/vuls0" >> "$GITHUB_ENV"
 
       - name: Prepare scan results (vuls2-supported families only)
         run: |
@@ -77,8 +81,8 @@ jobs:
           set +e
           vuls diff detection \
             ./scan-results \
-            ./baseline.db "$(command -v vuls0)" \
-            ./vuls.db    "$(command -v vuls0)" \
+            ./baseline.db "$VULS0" \
+            ./vuls.db    "$VULS0" \
             --change-rate-threshold ${{ inputs.change_rate_threshold }} \
             | tee ./diff-detection-report.md
           rc=${PIPESTATUS[0]}
