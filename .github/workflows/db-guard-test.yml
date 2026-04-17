@@ -45,13 +45,45 @@ jobs:
           # Capture exit code so the summary is written even on threshold breach.
           set +e
           vuls diff db ./baseline.db ./vuls.db \
-            --change-rate-threshold ${{ inputs.change_rate_threshold }} \
+            --change-rate-threshold 1000 \
             | tee ./diff-report.md
           rc=${PIPESTATUS[0]}
           set -e
           # $GITHUB_STEP_SUMMARY is capped at 1 MiB; head is enough here because
           # the summary section (before "## Details") fits in well under 100 lines.
           head -n 100 ./diff-report.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      # vuls0 (future-architect/vuls) main HEAD is used as the scanner binary
+      # for both DBs to isolate DB-induced detection differences.
+      - name: Install vuls0 (future-architect/vuls main)
+        run: |
+          go install github.com/future-architect/vuls/cmd/vuls@main
+          mv "$(go env GOPATH)/bin/vuls" "$(go env GOPATH)/bin/vuls0"
+
+      - name: Prepare scan results (vuls2-supported families only)
+        run: |
+          git clone --depth 1 https://github.com/vulsio/integration.git /tmp/integration
+          mkdir -p ./scan-results
+          # Copy all scan results then drop the ones whose family is handled by
+          # gost (Windows) instead of vuls2 — see vuls/detector/detector.go
+          # DetectPkgCves switch.
+          cp /tmp/integration/data/results/*.json ./scan-results/
+          rm -f ./scan-results/windows_*.json
+          ls -1 ./scan-results
+
+      - name: Diff detection between baseline and target DBs
+        run: |
+          set +e
+          vuls diff detection \
+            ./scan-results \
+            ./baseline.db "$(command -v vuls0)" \
+            ./vuls.db    "$(command -v vuls0)" \
+            --change-rate-threshold ${{ inputs.change_rate_threshold }} \
+            | tee ./diff-detection-report.md
+          rc=${PIPESTATUS[0]}
+          set -e
+          head -n 100 ./diff-detection-report.md >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
       # --- END: logic to paste between "Compact vuls.db" and "Upload vuls.db..." in db-nightly.yml ---
 
