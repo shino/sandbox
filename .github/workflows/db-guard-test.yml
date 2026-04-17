@@ -69,7 +69,7 @@ jobs:
           # gost (Windows) instead of vuls2 — see vuls/detector/detector.go
           # DetectPkgCves switch.
           cp /tmp/integration/data/results/*.json ./scan-results/
-          rm -f ./scan-results/windows_*.json
+          rm -f ./scan-results/windows_*.json ./scan-results/centos_*.json
           ls -1 ./scan-results
 
       - name: Diff detection between baseline and target DBs
