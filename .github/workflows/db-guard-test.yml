@@ -45,7 +45,19 @@ jobs:
           set -o pipefail
           vuls diff db ./baseline.db ./vuls.db \
             --change-rate-threshold ${{ inputs.change_rate_threshold }} \
-            | tee -a "$GITHUB_STEP_SUMMARY"
+            | tee ./diff-report.md
+          # $GITHUB_STEP_SUMMARY is capped at 1 MiB; strip the verbose
+          # "## Details" section (per-ecosystem ID lists) and hard-cap at 900 KiB.
+          awk '/^## Details /{exit} {print}' ./diff-report.md \
+            | head -c 900000 \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload full diff report as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diff-report
+          path: ./diff-report.md
       # --- END: logic to paste between "Compact vuls.db" and "Upload vuls.db..." in db-nightly.yml ---
 
       - name: Upload vuls.db to ghcr.io/vulsio/vuls-nightly-db (dummy for test)
