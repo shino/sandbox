@@ -96,7 +96,10 @@ jobs:
             | tee ./diff-detection-report.md
           rc=${PIPESTATUS[0]}
           set -e
-          head -n 100 ./diff-detection-report.md >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Diff detection (vuls0 master HEAD)"
+            head -n 100 ./diff-detection-report.md
+          } >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
 
       # Additional check with a slightly older vuls0 binary (pinned commit) to
@@ -139,7 +142,11 @@ jobs:
             | tee ./diff-detection-old-report.md
           rc=${PIPESTATUS[0]}
           set -e
-          head -n 100 ./diff-detection-old-report.md >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "---"
+            echo "## Diff detection (older pinned vuls0 @4cc9108)"
+            head -n 100 ./diff-detection-old-report.md
+          } >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
 
       - name: Diff vuls.db against baseline
@@ -151,7 +158,8 @@ jobs:
             | tee ./diff-report.md
           rc=${PIPESTATUS[0]}
           set -e
-          head -n 200 ./diff-report.md >> "$GITHUB_STEP_SUMMARY"
+          echo "---" >> "$GITHUB_STEP_SUMMARY"
+          head -n 300 ./diff-report.md >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
 
       # --- END: logic to paste between "Compact vuls.db" and "Upload vuls.db..." in db-nightly.yml ---
