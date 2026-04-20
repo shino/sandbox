@@ -151,7 +151,7 @@ jobs:
             | tee ./diff-report.md
           rc=${PIPESTATUS[0]}
           set -e
-          head -n 100 ./diff-report.md >> "$GITHUB_STEP_SUMMARY"
+          head -n 200 ./diff-report.md >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
 
       # --- END: logic to paste between "Compact vuls.db" and "Upload vuls.db..." in db-nightly.yml ---
