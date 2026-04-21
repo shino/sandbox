@@ -1,4 +1,15 @@
-name: DB Guard Test
+name: DB Guard Fail Test (simulated ubuntu regression)
+
+# Sibling of db-guard-test.yml. Instead of fetching the current nightly DB for
+# both baseline and target, this workflow pins two historical DB digests from
+# ghcr.io/vulsio/vuls-nightly-db that are known to contain a massive ubuntu-wide
+# churn (all ubuntu releases FAIL, peak ~745% on ubuntu:25.10) between
+# 2026-03-10 and 2026-03-11. Combined with a pinned older vuls0 binary
+# (9efad2a), both the master and older-binary detection checks are expected to
+# FAIL, simulating an ubuntu regression landing in the nightly DB.
+#
+# The baseline/target digests are hardcoded as env vars (BASELINE_REPOSITORY /
+# TARGET_REPOSITORY) below.
 
 on:
   workflow_dispatch:
@@ -29,6 +40,12 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GOEXPERIMENT: jsonv2
+      # Historical vuls.db digests pinned to simulate a broken target DB.
+      # Obtained via `vuls db search metadata --dbpath <daily>.db | jq -r .digest`.
+      # Baseline: 2026-03-10 nightly-db. Target: 2026-03-11 nightly-db (contains
+      # the massive ubuntu-wide churn; peak ~745% on ubuntu:25.10).
+      BASELINE_REPOSITORY: ghcr.io/vulsio/vuls-nightly-db@sha256:eab4b15e4db3700fa233bd5bc1e4dec87f3c0a71ad840f077897d527e4623f39
+      TARGET_REPOSITORY: ghcr.io/vulsio/vuls-nightly-db@sha256:432808a4dfbea5d7b5be411f60d4af9d23c68a414235349eecfa92009d3d5f1a
     steps:
       - name: Set up Go 1.x
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
@@ -40,11 +57,10 @@ jobs:
         # go install does not accept branch names with '/'; pin to a commit SHA on shino/diff-guard.
         run: go install github.com/MaineK00n/vuls2/cmd/vuls@4a79f3f6116f5b3b978dc4444f52f0c7d98889a0
 
-      # Skip the real db-build (fetch/extract/add) for this smoke test; pull an
-      # existing nightly DB so `vuls diff detection` has something to read.
-      # In production this is replaced with the freshly built ./vuls.db.
-      - name: Fetch target vuls.db (stand-in for db-build output)
-        run: vuls db fetch --dbpath ./vuls.db --repository ghcr.io/vulsio/vuls-nightly-db:nightly --no-progress
+      # Stand-in for the freshly built ./vuls.db — fetch the hand-picked target
+      # DB (expected to contain the simulated ubuntu regression).
+      - name: Fetch target vuls.db (hand-picked historical DB)
+        run: vuls db fetch --dbpath ./vuls.db --repository "$TARGET_REPOSITORY" --no-progress
 
       # --- BEGIN: logic to paste between "Compact vuls.db" and "Upload vuls.db..." in db-nightly.yml ---
 
@@ -61,8 +77,8 @@ jobs:
       #   cause is well understood, re-run this workflow with `force=true` to
       #   proceed with the publish.
 
-      - name: Fetch baseline vuls.db from ghcr.io/vulsio/vuls-nightly-db
-        run: vuls db fetch --dbpath ./baseline.db --repository ghcr.io/vulsio/vuls-nightly-db:nightly --no-progress
+      - name: Fetch baseline vuls.db (hand-picked historical DB)
+        run: vuls db fetch --dbpath ./baseline.db --repository "$BASELINE_REPOSITORY" --no-progress
 
       - name: Install vuls0 (future-architect/vuls master)
         if: ${{ !inputs.force }}
@@ -104,11 +120,12 @@ jobs:
 
       # Additional check with a slightly older vuls0 binary (pinned commit) to
       # catch regressions that only surface against past vuls0 versions.
+      # Pinned to 9efad2a for the simulated ubuntu-regression scenario.
       - name: Install vuls0 for older-binary check (pinned commit)
         if: ${{ !inputs.force }}
         run: |
           mkdir -p /tmp/vuls0-old-bin
-          GOBIN=/tmp/vuls0-old-bin go install github.com/future-architect/vuls/cmd/vuls@4cc910824a2880fbfb322dd4e9d94b68558bed57
+          GOBIN=/tmp/vuls0-old-bin go install github.com/future-architect/vuls/cmd/vuls@9efad2a
           mv /tmp/vuls0-old-bin/vuls /tmp/vuls0-old-bin/vuls0-old
           echo "VULS0_OLD=/tmp/vuls0-old-bin/vuls0-old" >> "$GITHUB_ENV"
 
@@ -144,7 +161,7 @@ jobs:
           set -e
           {
             echo "---"
-            echo "## Diff detection (older pinned vuls0 @4cc9108)"
+            echo "## Diff detection (older pinned vuls0 @9efad2a)"
             head -n 100 ./diff-detection-old-report.md
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
