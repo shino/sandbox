@@ -15,6 +15,8 @@ name: DB Guard Fail Test (simulated redhat diff-db failure)
 # TARGET_REPOSITORY) below.
 
 on:
+  schedule:
+    - cron: "0 */6 * * *"
   workflow_dispatch:
     inputs:
       db_change_rate_threshold:
@@ -43,6 +45,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GOEXPERIMENT: jsonv2
+      FORCE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force == 'true' || 'false' }}
+      DB_CHANGE_RATE_THRESHOLD: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.db_change_rate_threshold || '10' }}
+      DETECTION_CHANGE_RATE_THRESHOLD: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.detection_change_rate_threshold || '5' }}
       # Historical vuls.db digests pinned to simulate a redhat regression.
       # Obtained via `vuls db search metadata --dbpath <daily>.db | jq -r .digest`.
       # Baseline: 2026-03-03 nightly-db. Target: 2026-03-04 nightly-db
@@ -82,6 +87,7 @@ jobs:
       #   proceed with the publish.
 
       - name: Fetch baseline vuls.db (hand-picked historical DB)
+        if: ${{ env.FORCE != 'true' }}
         run: vuls db fetch --dbpath ./baseline.db --repository "$BASELINE_REPOSITORY" --no-progress
 
       # NOTE: detection steps are commented out for this scenario. The chosen
@@ -91,7 +97,7 @@ jobs:
       # and mask the `vuls diff db` failure we want to exercise here.
       #
       # - name: Install vuls0 (future-architect/vuls master)
-      #   if: ${{ !inputs.force }}
+      #   if: ${{ env.FORCE != 'true' }}
       #   run: |
       #     mkdir -p /tmp/vuls0-bin
       #     GOBIN=/tmp/vuls0-bin go install github.com/future-architect/vuls/cmd/vuls@master
@@ -99,7 +105,7 @@ jobs:
       #     echo "VULS0=/tmp/vuls0-bin/vuls0" >> "$GITHUB_ENV"
       #
       # - name: Prepare scan results (vuls2-supported families only)
-      #   if: ${{ !inputs.force }}
+      #   if: ${{ env.FORCE != 'true' }}
       #   run: |
       #     git clone --depth 1 https://github.com/vulsio/integration.git /tmp/integration
       #     mkdir -p ./scan-results
@@ -108,14 +114,14 @@ jobs:
       #     ls -1 ./scan-results
       #
       # - name: Diff detection between baseline and target DBs
-      #   if: ${{ !inputs.force }}
+      #   if: ${{ env.FORCE != 'true' }}
       #   run: |
       #     set +e
       #     vuls diff detection \
       #       ./scan-results \
       #       ./baseline.db "$VULS0" \
       #       ./vuls.db    "$VULS0" \
-      #       --change-rate-threshold ${{ inputs.detection_change_rate_threshold }} \
+      #       --change-rate-threshold "$DETECTION_CHANGE_RATE_THRESHOLD" \
       #       | tee ./diff-detection-report.md
       #     rc=${PIPESTATUS[0]}
       #     set -e
@@ -125,7 +131,7 @@ jobs:
       #     exit "$rc"
       #
       # - name: Install vuls0 for older-binary check (pinned commit)
-      #   if: ${{ !inputs.force }}
+      #   if: ${{ env.FORCE != 'true' }}
       #   run: |
       #     mkdir -p /tmp/vuls0-old-bin
       #     GOBIN=/tmp/vuls0-old-bin go install github.com/future-architect/vuls/cmd/vuls@9efad2a
@@ -133,7 +139,7 @@ jobs:
       #     echo "VULS0_OLD=/tmp/vuls0-old-bin/vuls0-old" >> "$GITHUB_ENV"
       #
       # - name: Prepare scan results for older-binary check (narrower family set)
-      #   if: ${{ !inputs.force }}
+      #   if: ${{ env.FORCE != 'true' }}
       #   run: |
       #     mkdir -p ./scan-results-old
       #     cp /tmp/integration/data/results/*.json ./scan-results-old/
@@ -149,14 +155,14 @@ jobs:
       #     ls -1 ./scan-results-old
       #
       # - name: Diff detection with older vuls0 binary (baseline vs target DB)
-      #   if: ${{ !inputs.force }}
+      #   if: ${{ env.FORCE != 'true' }}
       #   run: |
       #     set +e
       #     vuls diff detection \
       #       ./scan-results-old \
       #       ./baseline.db "$VULS0_OLD" \
       #       ./vuls.db    "$VULS0_OLD" \
-      #       --change-rate-threshold ${{ inputs.detection_change_rate_threshold }} \
+      #       --change-rate-threshold "$DETECTION_CHANGE_RATE_THRESHOLD" \
       #       | tee ./diff-detection-old-report.md
       #     rc=${PIPESTATUS[0]}
       #     set -e
@@ -167,11 +173,11 @@ jobs:
       #     exit "$rc"
 
       - name: Diff vuls.db against baseline
-        if: ${{ !inputs.force }}
+        if: ${{ env.FORCE != 'true' }}
         run: |
           set +e
           vuls diff db ./baseline.db ./vuls.db \
-            --change-rate-threshold ${{ inputs.db_change_rate_threshold }} \
+            --change-rate-threshold "$DB_CHANGE_RATE_THRESHOLD" \
             | tee ./diff-report.md
           rc=${PIPESTATUS[0]}
           set -e
