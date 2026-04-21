@@ -78,17 +78,31 @@ jobs:
           mv /tmp/vuls0-bin/vuls /tmp/vuls0-bin/vuls0
           echo "VULS0=/tmp/vuls0-bin/vuls0" >> "$GITHUB_ENV"
 
+      # Pin vulsio/integration to a specific commit so scan-result fixtures used
+      # by `vuls diff detection` do not change independently of this repo. Update
+      # this SHA intentionally when refreshing fixtures.
+      - name: Check out vulsio/integration (pinned) for scan-result fixtures
+        if: ${{ env.FORCE != 'true' }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          repository: vulsio/integration
+          ref: 24c96d27ea0ead49ad8311d8c92d204fef5c58b4
+          path: integration
+
       - name: Prepare scan results (vuls2-supported families only)
         if: ${{ env.FORCE != 'true' }}
         run: |
-          git clone --depth 1 https://github.com/vulsio/integration.git /tmp/integration
           mkdir -p ./scan-results
           # Copy all scan results then drop the ones whose family is handled by
           # gost (Windows) instead of vuls2 — see vuls/detector/detector.go
           # DetectPkgCves switch.
-          cp /tmp/integration/data/results/*.json ./scan-results/
+          cp ./integration/data/results/*.json ./scan-results/
           rm -f ./scan-results/windows_*.json ./scan-results/centos_*.json
           ls -1 ./scan-results
+
+          integration_sha=$(git -C ./integration rev-parse HEAD)
+          echo "## Scan-result fixtures source" >> "$GITHUB_STEP_SUMMARY"
+          echo "- vulsio/integration @ \`${integration_sha}\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Diff detection between baseline and target DBs
         if: ${{ env.FORCE != 'true' }}
@@ -121,7 +135,7 @@ jobs:
         if: ${{ env.FORCE != 'true' }}
         run: |
           mkdir -p ./scan-results-old
-          cp /tmp/integration/data/results/*.json ./scan-results-old/
+          cp ./integration/data/results/*.json ./scan-results-old/
           # Keep only families supported by the pinned older vuls0 binary:
           # RedHat (rhel_*), Fedora, Alma, Rocky, Oracle, Alpine, Ubuntu.
           find ./scan-results-old -maxdepth 1 -type f -name '*.json' \
