@@ -46,10 +46,8 @@ jobs:
           go-version: "stable"
           cache: false
 
-      - name: Install vuls2 (MaineK00n/vuls2 @ shino/fix-diff-cmd)
-        # `go install` rejects branch names containing '/', so pin to the
-        # current HEAD SHA of the shino/fix-diff-cmd branch.
-        run: go install github.com/MaineK00n/vuls2/cmd/vuls@b0c9b2f52f5c39d75a956a0be71b47dae1a95f5c
+      - name: Install vuls2
+        run: go install github.com/MaineK00n/vuls2/cmd/vuls@nightly
 
       # Skip the real db-build (fetch/extract/add) for this smoke test; pull an
       # existing nightly DB so `vuls diff detection` has something to read.
