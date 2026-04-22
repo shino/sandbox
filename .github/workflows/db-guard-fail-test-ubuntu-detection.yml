@@ -38,10 +38,14 @@ jobs:
     name: build vuls.db
     permissions:
       contents: read
-      packages: read
+      # packages:write required for pushing to GHCR and moving the :nightly tag.
+      packages: write
     runs-on: ubuntu-latest
     env:
       GOEXPERIMENT: jsonv2
+      # Sandbox publish target. Production will point at ghcr.io/vulsio/vuls-nightly-db.
+      PUBLISH_REPO: ghcr.io/shino/package-push-test1
+      PROMOTE_TAG: nightly
       # Historical vuls.db digests pinned to simulate a broken target DB.
       # Obtained via `vuls db search metadata --dbpath <daily>.db | jq -r .digest`.
       # Baseline: 2026-03-10 nightly-db. Target: 2026-03-11 nightly-db (contains
@@ -64,12 +68,58 @@ jobs:
           cache: false
 
       - name: Install vuls2
-        run: go install github.com/MaineK00n/vuls2/cmd/vuls@nightly
+        # Pinned to the commit that introduced tagless `vuls db push`
+        # (feat(db/push): support untagged push). Bump to @nightly once
+        # released.
+        run: go install github.com/MaineK00n/vuls2/cmd/vuls@5d67300d80e0b831ed559e2c875959b3010ea026
+
+      # vuls-data-update is used to move the :nightly tag (registry tag)
+      # once the guard passes.
+      - name: Install vuls-data-update
+        run: go install github.com/MaineK00n/vuls-data-update/cmd/vuls-data-update@main
 
       # Stand-in for the freshly built ./vuls.db — fetch the hand-picked target
       # DB (expected to contain the simulated ubuntu regression).
       - name: Fetch target vuls.db (hand-picked historical DB)
         run: vuls db fetch --dbpath ./vuls.db --repository "$TARGET_REPOSITORY" --no-progress
+
+      # `vuls db push` only accepts Zstandard-compressed payloads.
+      - name: Compress vuls.db (zstd)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq zstd
+          zstd -f -T0 ./vuls.db -o ./vuls.db.zst
+          ls -lh ./vuls.db ./vuls.db.zst
+
+      # Design: "always push tagless, operate by digest, promote to :nightly only on pass".
+      # See db-guard-test.yml for the rationale. In this fail-test workflow
+      # the guard is EXPECTED to fail, so the promotion step below is
+      # expected to be skipped — leaving :nightly untouched while the
+      # candidate manifest remains pullable by digest for investigation.
+      - name: Push vuls.db to GHCR (tagless, digest-only)
+        id: push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          log=$(mktemp)
+          vuls db push --token "${GH_TOKEN}" "${PUBLISH_REPO}" ./vuls.db.zst \
+            > >(tee /dev/stderr) \
+            2> >(tee "${log}" >&2)
+          digest=$(grep -oE 'digest=sha256:[0-9a-f]+' "${log}" | tail -n1 | cut -d= -f2)
+          if [ -z "${digest}" ]; then
+            echo "failed to capture digest from vuls db push log" >&2
+            exit 1
+          fi
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Pushed candidate image (untagged, digest-only)"
+            echo '```text'
+            echo "digest ref : ${PUBLISH_REPO}@${digest}"
+            echo '```'
+            echo "Image is always pushed before the diff guard runs; a failing"
+            echo "build stays pullable by digest for investigation."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # Expected to FAIL at the detection steps: the target DB contains a
       # massive ubuntu-wide churn vs the baseline (peak ~745% on ubuntu:25.10),
@@ -85,5 +135,21 @@ jobs:
           detection-change-rate-threshold: ${{ github.event.inputs.detection_change_rate_threshold || '5' }}
           vuls0-old-ref: 9efad2a
 
-      - name: Upload vuls.db to ghcr.io/vulsio/vuls-nightly-db (dummy for test)
-        run: echo "dummy publish"
+      # Guard passed (or was skipped via force=true): attach :nightly to the
+      # verified digest. In this fail-test the guard is expected to fail, so
+      # this step will normally be skipped and :nightly will remain untouched.
+      - name: Promote digest to :nightly
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          vuls-data-update dotgit registry tag \
+            --token "${{ secrets.GITHUB_TOKEN }}" \
+            "${PUBLISH_REPO}@${DIGEST}" "${PROMOTE_TAG}"
+          {
+            echo "## Promoted to :${PROMOTE_TAG}"
+            echo '```text'
+            echo "ref        : ${PUBLISH_REPO}:${PROMOTE_TAG}"
+            echo "digest ref : ${PUBLISH_REPO}@${DIGEST}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

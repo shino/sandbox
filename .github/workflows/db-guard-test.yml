@@ -54,7 +54,7 @@ jobs:
         # Pinned to the commit that introduced tagless `vuls db push`
         # (feat(db/push): support untagged push). Bump to @nightly once
         # released.
-        run: go install github.com/MaineK00n/vuls2/cmd/vuls@32f48bbface3b232005a0706375574eceeccc9c1
+        run: go install github.com/MaineK00n/vuls2/cmd/vuls@5d67300d80e0b831ed559e2c875959b3010ea026
 
       # vuls-data-update is used to move the :nightly tag (registry tag)
       # once the guard passes.
@@ -116,11 +116,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run diff guard
-        # Temporarily disabled to exercise the ORAS push/untag/promote flow
-        # end-to-end without gating on the guard result. Re-enable by
-        # restoring the original `if:` below.
-        if: ${{ github.event.inputs.force == '__disabled__' }}
-        # if: ${{ github.event.inputs.force != 'true' }}
+        if: ${{ github.event.inputs.force != 'true' }}
         uses: ./.github/actions/diff-guard
         with:
           target-db: ./vuls.db
