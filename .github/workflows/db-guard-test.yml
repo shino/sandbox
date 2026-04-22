@@ -32,6 +32,14 @@ jobs:
     env:
       GOEXPERIMENT: jsonv2
     steps:
+      # Check out this repo first so the composite action at
+      # `.github/actions/diff-guard` is resolvable via `uses: ./...`.
+      # NOTE: must precede any step that writes files to the workspace —
+      # `actions/checkout` cleans the workspace by default and would wipe
+      # the freshly fetched ./vuls.db otherwise.
+      - name: Check out repository (for composite action)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
       - name: Set up Go 1.x
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
@@ -46,11 +54,6 @@ jobs:
       # In production this is replaced with the freshly built ./vuls.db.
       - name: Fetch target vuls.db (stand-in for db-build output)
         run: vuls db fetch --dbpath ./vuls.db --repository ghcr.io/vulsio/vuls-nightly-db:nightly --no-progress
-
-      # Check out this repo so the composite action at
-      # `.github/actions/diff-guard` is resolvable via `uses: ./...`.
-      - name: Check out repository (for composite action)
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Run diff guard
         if: ${{ github.event.inputs.force != 'true' }}

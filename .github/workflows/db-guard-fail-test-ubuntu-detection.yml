@@ -49,6 +49,14 @@ jobs:
       BASELINE_REPOSITORY: ghcr.io/vulsio/vuls-nightly-db@sha256:eab4b15e4db3700fa233bd5bc1e4dec87f3c0a71ad840f077897d527e4623f39
       TARGET_REPOSITORY: ghcr.io/vulsio/vuls-nightly-db@sha256:432808a4dfbea5d7b5be411f60d4af9d23c68a414235349eecfa92009d3d5f1a
     steps:
+      # Check out this repo first so the composite action at
+      # `.github/actions/diff-guard` is resolvable via `uses: ./...`.
+      # NOTE: must precede any step that writes files to the workspace —
+      # `actions/checkout` cleans the workspace by default and would wipe
+      # the freshly fetched ./vuls.db otherwise.
+      - name: Check out repository (for composite action)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
       - name: Set up Go 1.x
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
@@ -62,11 +70,6 @@ jobs:
       # DB (expected to contain the simulated ubuntu regression).
       - name: Fetch target vuls.db (hand-picked historical DB)
         run: vuls db fetch --dbpath ./vuls.db --repository "$TARGET_REPOSITORY" --no-progress
-
-      # Check out this repo so the composite action at
-      # `.github/actions/diff-guard` is resolvable via `uses: ./...`.
-      - name: Check out repository (for composite action)
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       # Expected to FAIL at the detection steps: the target DB contains a
       # massive ubuntu-wide churn vs the baseline (peak ~745% on ubuntu:25.10),

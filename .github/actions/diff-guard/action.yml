@@ -59,7 +59,7 @@ runs:
         {
           echo "## vuls0 under test (master HEAD)"
           echo '```text'
-          /tmp/vuls0-bin/vuls0 -version 2>&1 || true
+          /tmp/vuls0-bin/vuls0 -v 2>&1 || true
           echo '```'
         } >> "$GITHUB_STEP_SUMMARY"
 
