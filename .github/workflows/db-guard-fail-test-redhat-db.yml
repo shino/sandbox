@@ -45,9 +45,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GOEXPERIMENT: jsonv2
-      FORCE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force == 'true' || 'false' }}
-      DB_CHANGE_RATE_THRESHOLD: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.db_change_rate_threshold || '10' }}
-      DETECTION_CHANGE_RATE_THRESHOLD: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.detection_change_rate_threshold || '5' }}
       # Historical vuls.db digests pinned to simulate a redhat regression.
       # Obtained via `vuls db search metadata --dbpath <daily>.db | jq -r .digest`.
       # Baseline: 2026-03-03 nightly-db. Target: 2026-03-04 nightly-db
@@ -61,6 +58,34 @@ jobs:
         with:
           go-version: "stable"
           cache: false
+
+      - name: Resolve guard settings
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_FORCE: ${{ github.event.inputs.force }}
+          INPUT_DB_CHANGE_RATE_THRESHOLD: ${{ github.event.inputs.db_change_rate_threshold }}
+          INPUT_DETECTION_CHANGE_RATE_THRESHOLD: ${{ github.event.inputs.detection_change_rate_threshold }}
+        run: |
+          force=false
+          db_change_rate_threshold=10
+          detection_change_rate_threshold=5
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$INPUT_FORCE" == "true" ]]; then
+              force=true
+            fi
+            if [[ -n "$INPUT_DB_CHANGE_RATE_THRESHOLD" ]]; then
+              db_change_rate_threshold="$INPUT_DB_CHANGE_RATE_THRESHOLD"
+            fi
+            if [[ -n "$INPUT_DETECTION_CHANGE_RATE_THRESHOLD" ]]; then
+              detection_change_rate_threshold="$INPUT_DETECTION_CHANGE_RATE_THRESHOLD"
+            fi
+          fi
+
+          echo "FORCE=$force" >> "$GITHUB_ENV"
+          echo "DB_CHANGE_RATE_THRESHOLD=$db_change_rate_threshold" >> "$GITHUB_ENV"
+          echo "DETECTION_CHANGE_RATE_THRESHOLD=$detection_change_rate_threshold" >> "$GITHUB_ENV"
 
       - name: Install vuls2
         run: go install github.com/MaineK00n/vuls2/cmd/vuls@nightly
@@ -103,12 +128,9 @@ jobs:
       #     mv /tmp/vuls0-bin/vuls /tmp/vuls0-bin/vuls0
       #     echo "VULS0=/tmp/vuls0-bin/vuls0" >> "$GITHUB_ENV"
       #
-      #     version_out=$(/tmp/vuls0-bin/vuls0 -version 2>&1 || true)
-      #     module_out=$(go version -m /tmp/vuls0-bin/vuls0 2>&1 || true)
       #     echo "## vuls0 under test (master HEAD)" >> "$GITHUB_STEP_SUMMARY"
       #     echo '```text' >> "$GITHUB_STEP_SUMMARY"
-      #     printf '%s\n\n' "$version_out" >> "$GITHUB_STEP_SUMMARY"
-      #     printf '%s\n' "$module_out" >> "$GITHUB_STEP_SUMMARY"
+      #     printf '%s\n' "$(/tmp/vuls0-bin/vuls0 -version 2>&1 || true)" >> "$GITHUB_STEP_SUMMARY"
       #     echo '```' >> "$GITHUB_STEP_SUMMARY"
       #
       # - name: Check out vulsio/integration (pinned) for scan-result fixtures
@@ -123,6 +145,9 @@ jobs:
       #   if: ${{ env.FORCE != 'true' }}
       #   run: |
       #     mkdir -p ./scan-results
+      #     # Copy all scan results then drop the ones excluded from this vuls2
+      #     # detection diff: Windows (handled by gost) and CentOS — see
+      #     # vuls/detector/detector.go DetectPkgCves switch.
       #     cp ./integration/data/results/*.json ./scan-results/
       #     rm -f ./scan-results/windows_*.json ./scan-results/centos_*.json
       #     ls -1 ./scan-results
@@ -133,15 +158,17 @@ jobs:
       #
       # - name: Diff detection between baseline and target DBs
       #   if: ${{ env.FORCE != 'true' }}
+      #   shell: bash
       #   run: |
       #     set +e
+      #     set -o pipefail
       #     vuls diff detection \
       #       ./scan-results \
       #       ./baseline.db "$VULS0" \
       #       ./vuls.db    "$VULS0" \
       #       --change-rate-threshold "$DETECTION_CHANGE_RATE_THRESHOLD" \
       #       | tee ./diff-detection-report.md
-      #     rc=${PIPESTATUS[0]}
+      #     rc=$?
       #     set -e
       #
       #     echo "---" >> "$GITHUB_STEP_SUMMARY"
@@ -175,15 +202,17 @@ jobs:
       #
       # - name: Diff detection with older vuls0 binary (baseline vs target DB)
       #   if: ${{ env.FORCE != 'true' }}
+      #   shell: bash
       #   run: |
       #     set +e
+      #     set -o pipefail
       #     vuls diff detection \
       #       ./scan-results-old \
       #       ./baseline.db "$VULS0_OLD" \
       #       ./vuls.db    "$VULS0_OLD" \
       #       --change-rate-threshold "$DETECTION_CHANGE_RATE_THRESHOLD" \
       #       | tee ./diff-detection-old-report.md
-      #     rc=${PIPESTATUS[0]}
+      #     rc=$?
       #     set -e
       #
       #     echo "---" >> "$GITHUB_STEP_SUMMARY"
@@ -202,6 +231,7 @@ jobs:
           set -e
 
           echo "---" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Diff vuls.db" >> "$GITHUB_STEP_SUMMARY"
           head -n 300 ./diff-report.md >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
 
