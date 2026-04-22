@@ -40,6 +40,15 @@ inputs:
     description: future-architect/vuls commit SHA for the older-binary detection check.
     required: false
     default: 4cc910824a2880fbfb322dd4e9d94b68558bed57
+  skip-diff-detection:
+    description: |
+      (sandbox only) When `true`, skip both `vuls diff detection` steps and
+      run only `vuls diff db`. Intended for failure-simulation scenarios
+      whose hand-picked historical DBs predate OS families present in the
+      pinned fixtures, which would otherwise crash `vuls diff detection`.
+      Do not use in production workflows.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -92,6 +101,7 @@ runs:
         echo "- vulsio/integration @ \`${integration_sha}\`" >> "$GITHUB_STEP_SUMMARY"
 
     - name: Diff detection between baseline and target DBs
+      if: inputs.skip-diff-detection != 'true'
       shell: bash
       env:
         TARGET_DB: ${{ inputs.target-db }}
@@ -116,6 +126,7 @@ runs:
     # Additional check with a slightly older vuls0 binary (pinned commit) to
     # catch regressions that only surface against past vuls0 versions.
     - name: Install vuls0 for older-binary check (pinned commit)
+      if: inputs.skip-diff-detection != 'true'
       shell: bash
       env:
         VULS0_OLD_REF: ${{ inputs.vuls0-old-ref }}
@@ -133,6 +144,7 @@ runs:
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Prepare scan results for older-binary check (drop families unsupported by older vuls0)
+      if: inputs.skip-diff-detection != 'true'
       shell: bash
       run: |
         # Start from the already-filtered master-HEAD set (windows/centos gone)
@@ -152,6 +164,7 @@ runs:
         ls -1 ./scan-results-old
 
     - name: Diff detection with older vuls0 binary (baseline vs target DB)
+      if: inputs.skip-diff-detection != 'true'
       shell: bash
       env:
         TARGET_DB: ${{ inputs.target-db }}

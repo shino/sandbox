@@ -7,11 +7,8 @@ name: DB Guard Fail Test (simulated redhat diff-db failure)
 # redhat:4 2.5%. KB change rate is 0.0% for all ecosystems (pure
 # detection-side churn in the extracted data).
 #
-# Because detection output moves in tandem with this change, `vuls diff
-# detection` would fail first and mask the `vuls diff db` failure we want
-# to exercise. The detection threshold is intentionally bumped to a value
-# high enough for detection to pass (default 10000%), so the guard gets
-# through detection and fails at the final `vuls diff db` step.
+# `skip-diff-detection: true` is passed to the composite so only
+# `vuls diff db` runs — that is the failure path this scenario exercises.
 #
 # The baseline/target digests are hardcoded as env vars (BASELINE_REPOSITORY /
 # TARGET_REPOSITORY) below.
@@ -26,9 +23,9 @@ on:
         required: false
         default: "10"
       detection_change_rate_threshold:
-        description: "`vuls diff detection` change rate (%) threshold per scan result; intentionally high so detection passes and `vuls diff db` is what trips this scenario."
+        description: "`vuls diff detection` change rate (%) threshold per scan result; diff fails if exceeded"
         required: false
-        default: "10000"
+        default: "5"
       force:
         description: "**DANGER** Skip diff checks and proceed regardless"
         required: false
@@ -78,9 +75,8 @@ jobs:
         run: vuls db fetch --dbpath ./vuls.db --repository "$TARGET_REPOSITORY" --no-progress
 
       # Expected to FAIL at the final `vuls diff db` step: baseline/target
-      # differ by ~65% on redhat:6 / ~57% on redhat:7. The
-      # detection-change-rate-threshold is deliberately set to 10000 (default)
-      # so the detection steps pass and do not mask this failure.
+      # differ by ~65% on redhat:6 / ~57% on redhat:7. Detection is skipped
+      # via the composite flag below.
       - name: Run diff guard
         if: ${{ github.event.inputs.force != 'true' }}
         uses: ./.github/actions/diff-guard
@@ -88,8 +84,13 @@ jobs:
           target-db: ./vuls.db
           baseline-repository: ${{ env.BASELINE_REPOSITORY }}
           db-change-rate-threshold: ${{ github.event.inputs.db_change_rate_threshold || '10' }}
-          detection-change-rate-threshold: ${{ github.event.inputs.detection_change_rate_threshold || '10000' }}
+          detection-change-rate-threshold: ${{ github.event.inputs.detection_change_rate_threshold || '5' }}
           vuls0-old-ref: 9efad2a
+          # The pinned BASELINE/TARGET DBs (2026-03-03/04) predate several
+          # OS families present in the fixture set and `vuls diff detection`
+          # crashes on them. This scenario only exercises the `vuls diff db`
+          # failure path anyway, so skip detection entirely.
+          skip-diff-detection: "true"
 
       - name: Upload vuls.db to ghcr.io/vulsio/vuls-nightly-db (dummy for test)
         run: echo "dummy publish"
