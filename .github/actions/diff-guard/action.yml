@@ -53,6 +53,21 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Record vuls (vuls2) binary metadata
+      shell: bash
+      run: |
+        # Diff behavior (thresholds, output format) can change across vuls2
+        # nightlies, so capture the exact binary being used to drive
+        # `vuls diff ...` alongside the vuls0 binaries recorded below.
+        vuls_bin=$(command -v vuls)
+        {
+          echo "## vuls (vuls2) driving diff checks"
+          echo '```text'
+          echo "path: ${vuls_bin}"
+          go version -m "${vuls_bin}" 2>&1 | awk '$1=="mod" && $2=="github.com/MaineK00n/vuls2"' || true
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
     - name: Fetch baseline vuls.db
       shell: bash
       run: vuls db fetch --dbpath ./baseline.db --repository "${{ inputs.baseline-repository }}" --no-progress
