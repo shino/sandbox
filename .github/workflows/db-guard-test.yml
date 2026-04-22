@@ -99,14 +99,14 @@ jobs:
           # 2) resolve digest via the OCI distribution manifest endpoint.
           #    `vuls-data-update dotgit registry status` validates dotgit-specific
           #    media types and rejects vuls.db images, so we query directly.
-          #    GHCR accepts the raw GITHUB_TOKEN as a Bearer token. We pass
-          #    it as-is (NOT base64-encoded): base64 is not encryption, and
-          #    using the raw token means GitHub Actions' automatic log
-          #    masking catches any accidental leak (it only masks the exact
-          #    secret value, not transformed variants).
+          #    GHCR's v2 registry API requires the GITHUB_TOKEN to be
+          #    base64-encoded in the Authorization: Bearer header — this is
+          #    GHCR-specific and differs from the GitHub REST API. See
+          #    https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry
           repo_path="${PUBLISH_REPO#ghcr.io/}"
+          b64_token=$(printf '%s' "${GH_TOKEN}" | base64 -w 0)
           digest=$(curl -fsSLI \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Authorization: Bearer ${b64_token}" \
             -H "Accept: application/vnd.oci.image.manifest.v1+json" \
             "https://ghcr.io/v2/${repo_path}/manifests/${staging_tag}" \
             | awk 'BEGIN{IGNORECASE=1}/^docker-content-digest:/{print $2}' \
