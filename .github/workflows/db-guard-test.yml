@@ -51,10 +51,13 @@ jobs:
           cache: false
 
       - name: Install vuls2
-        run: go install github.com/MaineK00n/vuls2/cmd/vuls@nightly
+        # Pinned to the commit that introduced tagless `vuls db push`
+        # (feat(db/push): support untagged push). Bump to @nightly once
+        # released.
+        run: go install github.com/MaineK00n/vuls2/cmd/vuls@32f48bbface3b232005a0706375574eceeccc9c1
 
-      # vuls-data-update is used to move the :nightly tag (registry tag) and
-      # remove the staging tag (registry untag) once the guard passes.
+      # vuls-data-update is used to move the :nightly tag (registry tag)
+      # once the guard passes.
       - name: Install vuls-data-update
         run: go install github.com/MaineK00n/vuls-data-update/cmd/vuls-data-update@main
 
@@ -72,55 +75,36 @@ jobs:
           zstd -f -T0 ./vuls.db -o ./vuls.db.zst
           ls -lh ./vuls.db ./vuls.db.zst
 
-      # Design: "always push, operate by digest, promote to :nightly only on pass".
+      # Design: "always push tagless, operate by digest, promote to :nightly only on pass".
       #
-      # `vuls db push` requires a tag, so we push to a disposable staging tag,
-      # immediately resolve the manifest digest, then untag right away. From
-      # that point the image only exists as an untagged manifest reachable by
-      # digest — no transient tag clutter, no race where a later step sees the
-      # staging tag. All subsequent operations (summary, guard decision,
-      # promotion) reference `${PUBLISH_REPO}@<digest>` exclusively.
+      # `vuls db push` accepts a tagless `<repository>` reference: the
+      # manifest is pushed without any tag and only reachable by digest.
+      # It emits the digest via slog to stderr (e.g.
+      # `msg="pushed vuls db" ref=... digest=sha256:...`), so we capture
+      # stderr and parse the structured log line. This keeps stdout clean
+      # and consistent with the rest of vuls2's CLI surface.
       #
+      # All subsequent operations reference `${PUBLISH_REPO}@<digest>`.
       # Even if the guard fails the untagged manifest remains pullable by
       # digest for investigation (within GHCR's retention window).
-      - name: Push vuls.db to GHCR and resolve digest (digest-only workflow)
+      - name: Push vuls.db to GHCR (tagless, digest-only)
         id: push
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-
-          staging_tag="candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-
-          # 1) push under a disposable tag (the only form `vuls db push` accepts).
-          vuls db push --force --token "${GH_TOKEN}" \
-            "${PUBLISH_REPO}:${staging_tag}" ./vuls.db.zst
-
-          # 2) resolve digest via the OCI distribution manifest endpoint.
-          #    `vuls-data-update dotgit registry status` validates dotgit-specific
-          #    media types and rejects vuls.db images, so we query directly.
-          #    GHCR's v2 registry API requires the GITHUB_TOKEN to be
-          #    base64-encoded in the Authorization: Bearer header — this is
-          #    GHCR-specific and differs from the GitHub REST API. See
-          #    https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry
-          repo_path="${PUBLISH_REPO#ghcr.io/}"
-          b64_token=$(printf '%s' "${GH_TOKEN}" | base64 -w 0)
-          digest=$(curl -fsSLI \
-            -H "Authorization: Bearer ${b64_token}" \
-            -H "Accept: application/vnd.oci.image.manifest.v1+json" \
-            "https://ghcr.io/v2/${repo_path}/manifests/${staging_tag}" \
-            | awk 'BEGIN{IGNORECASE=1}/^docker-content-digest:/{print $2}' \
-            | tr -d '\r\n')
+          log=$(mktemp)
+          # slog output goes to stderr; capture it while letting both
+          # streams reach the runner log for debuggability.
+          vuls db push --token "${GH_TOKEN}" "${PUBLISH_REPO}" ./vuls.db.zst \
+            > >(tee /dev/stderr) \
+            2> >(tee "${log}" >&2)
+          # Extract the digest from the "pushed vuls db" log record.
+          digest=$(grep -oE 'digest=sha256:[0-9a-f]+' "${log}" | tail -n1 | cut -d= -f2)
           if [ -z "${digest}" ]; then
-            echo "failed to resolve digest" >&2
+            echo "failed to capture digest from vuls db push log" >&2
             exit 1
           fi
-
-          # 3) drop the staging tag immediately — from here on we only use the digest.
-          vuls-data-update dotgit registry untag \
-            --token "${GH_TOKEN}" \
-            "${PUBLISH_REPO}:${staging_tag}"
-
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
           {
             echo "## Pushed candidate image (untagged, digest-only)"
