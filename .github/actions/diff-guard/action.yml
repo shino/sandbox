@@ -56,10 +56,14 @@ runs:
         mv /tmp/vuls0-bin/vuls /tmp/vuls0-bin/vuls0
         echo "VULS0=/tmp/vuls0-bin/vuls0" >> "$GITHUB_ENV"
 
+        # `go version -m` reads the module metadata Go embeds into every
+        # binary; the `mod` line's pseudo-version carries both the build
+        # timestamp and short commit hash
+        # (e.g. `v0.38.7-0.YYYYMMDDHHMMSS-<shorthash>`).
         {
           echo "## vuls0 under test (master HEAD)"
           echo '```text'
-          /tmp/vuls0-bin/vuls0 -v 2>&1 || true
+          go version -m /tmp/vuls0-bin/vuls0 2>&1 | awk '$1=="mod" && $2=="github.com/future-architect/vuls"' || true
           echo '```'
         } >> "$GITHUB_STEP_SUMMARY"
 
@@ -121,22 +125,30 @@ runs:
         mv /tmp/vuls0-old-bin/vuls /tmp/vuls0-old-bin/vuls0-old
         echo "VULS0_OLD=/tmp/vuls0-old-bin/vuls0-old" >> "$GITHUB_ENV"
 
-    - name: Prepare scan results for older-binary check (narrower family set)
+        {
+          echo "## vuls0 under test (older pinned @${VULS0_OLD_REF:0:7})"
+          echo '```text'
+          go version -m /tmp/vuls0-old-bin/vuls0-old 2>&1 | awk '$1=="mod" && $2=="github.com/future-architect/vuls"' || true
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Prepare scan results for older-binary check (drop families unsupported by older vuls0)
       shell: bash
       run: |
+        # Start from the already-filtered master-HEAD set (windows/centos gone)
+        # and additionally remove families the pinned older vuls0 cannot
+        # process. This is expressed as a *blacklist* so new families added
+        # upstream are retained automatically; only known-broken ones need
+        # listing here. Update this set when bumping `vuls0-old-ref`.
         mkdir -p ./scan-results-old
-        cp ./integration/data/results/*.json ./scan-results-old/
-        # Keep only families supported by the pinned older vuls0 binary:
-        # RedHat (rhel_*), Fedora, Alma, Rocky, Oracle, Alpine, Ubuntu.
-        find ./scan-results-old -maxdepth 1 -type f -name '*.json' \
-          ! -name 'rhel_*.json' \
-          ! -name 'fedora_*.json' \
-          ! -name 'alma_*.json' \
-          ! -name 'rocky_*.json' \
-          ! -name 'oracle_*.json' \
-          ! -name 'alpine_*.json' \
-          ! -name 'ubuntu_*.json' \
-          -delete
+        cp ./scan-results/*.json ./scan-results-old/
+        rm -f \
+          ./scan-results-old/amazon_*.json \
+          ./scan-results-old/debian_*.json \
+          ./scan-results-old/leap.json \
+          ./scan-results-old/opensuse_*.json \
+          ./scan-results-old/sles*.json \
+          ./scan-results-old/suse_*.json
         ls -1 ./scan-results-old
 
     - name: Diff detection with older vuls0 binary (baseline vs target DB)
