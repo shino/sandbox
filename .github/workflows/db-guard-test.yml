@@ -27,10 +27,14 @@ jobs:
     name: build vuls.db
     permissions:
       contents: read
-      packages: read
+      # packages:write required for pushing to GHCR and moving the :nightly tag.
+      packages: write
     runs-on: ubuntu-latest
     env:
       GOEXPERIMENT: jsonv2
+      # Sandbox publish target. Production will point at ghcr.io/vulsio/vuls-nightly-db.
+      PUBLISH_REPO: ghcr.io/shino/package-push-test1
+      PROMOTE_TAG: nightly
     steps:
       # Check out this repo first so the composite action at
       # `.github/actions/diff-guard` is resolvable via `uses: ./...`.
@@ -49,14 +53,86 @@ jobs:
       - name: Install vuls2
         run: go install github.com/MaineK00n/vuls2/cmd/vuls@nightly
 
+      # vuls-data-update is used to move the :nightly tag (registry tag) and
+      # remove the staging tag (registry untag) once the guard passes.
+      - name: Install vuls-data-update
+        run: go install github.com/MaineK00n/vuls-data-update/cmd/vuls-data-update@main
+
       # Skip the real db-build (fetch/extract/add) for this smoke test; pull an
       # existing nightly DB so `vuls diff detection` has something to read.
       # In production this is replaced with the freshly built ./vuls.db.
       - name: Fetch target vuls.db (stand-in for db-build output)
         run: vuls db fetch --dbpath ./vuls.db --repository ghcr.io/vulsio/vuls-nightly-db:nightly --no-progress
 
+      # `vuls db push` only accepts Zstandard-compressed payloads.
+      - name: Compress vuls.db (zstd)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq zstd
+          zstd -f -T0 ./vuls.db -o ./vuls.db.zst
+          ls -lh ./vuls.db ./vuls.db.zst
+
+      # Design: "always push, operate by digest, promote to :nightly only on pass".
+      #
+      # `vuls db push` requires a tag, so we push to a disposable staging tag,
+      # immediately resolve the manifest digest, then untag right away. From
+      # that point the image only exists as an untagged manifest reachable by
+      # digest — no transient tag clutter, no race where a later step sees the
+      # staging tag. All subsequent operations (summary, guard decision,
+      # promotion) reference `${PUBLISH_REPO}@<digest>` exclusively.
+      #
+      # Even if the guard fails the untagged manifest remains pullable by
+      # digest for investigation (within GHCR's retention window).
+      - name: Push vuls.db to GHCR and resolve digest (digest-only workflow)
+        id: push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          staging_tag="candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          # 1) push under a disposable tag (the only form `vuls db push` accepts).
+          vuls db push --force --token "${GH_TOKEN}" \
+            "${PUBLISH_REPO}:${staging_tag}" ./vuls.db.zst
+
+          # 2) resolve digest via the OCI distribution manifest endpoint.
+          #    `vuls-data-update dotgit registry status` validates dotgit-specific
+          #    media types and rejects vuls.db images, so we query directly.
+          repo_path="${PUBLISH_REPO#ghcr.io/}"
+          bearer=$(printf '%s' "${GH_TOKEN}" | base64 -w 0)
+          digest=$(curl -fsSLI \
+            -H "Authorization: Bearer ${bearer}" \
+            -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+            "https://ghcr.io/v2/${repo_path}/manifests/${staging_tag}" \
+            | awk 'BEGIN{IGNORECASE=1}/^docker-content-digest:/{print $2}' \
+            | tr -d '\r\n')
+          if [ -z "${digest}" ]; then
+            echo "failed to resolve digest" >&2
+            exit 1
+          fi
+
+          # 3) drop the staging tag immediately — from here on we only use the digest.
+          vuls-data-update dotgit registry untag \
+            --token "${GH_TOKEN}" \
+            "${PUBLISH_REPO}:${staging_tag}"
+
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Pushed candidate image (untagged, digest-only)"
+            echo '```text'
+            echo "digest ref : ${PUBLISH_REPO}@${digest}"
+            echo '```'
+            echo "Image is always pushed before the diff guard runs; a failing"
+            echo "build stays pullable by digest for investigation."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Run diff guard
-        if: ${{ github.event.inputs.force != 'true' }}
+        # Temporarily disabled to exercise the ORAS push/untag/promote flow
+        # end-to-end without gating on the guard result. Re-enable by
+        # restoring the original `if:` below.
+        if: ${{ github.event.inputs.force == '__disabled__' }}
+        # if: ${{ github.event.inputs.force != 'true' }}
         uses: ./.github/actions/diff-guard
         with:
           target-db: ./vuls.db
@@ -64,5 +140,21 @@ jobs:
           db-change-rate-threshold: ${{ github.event.inputs.db_change_rate_threshold || '10' }}
           detection-change-rate-threshold: ${{ github.event.inputs.detection_change_rate_threshold || '5' }}
 
-      - name: Upload vuls.db to ghcr.io/vulsio/vuls-nightly-db (dummy for test)
-        run: echo "dummy publish"
+      # Guard passed (or was skipped via force=true): attach :nightly to the
+      # verified digest. The previously-tagged :nightly manifest becomes
+      # untagged and remains reachable by digest within GHCR's retention window.
+      - name: Promote digest to :nightly
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          vuls-data-update dotgit registry tag \
+            --token "${{ secrets.GITHUB_TOKEN }}" \
+            "${PUBLISH_REPO}@${DIGEST}" "${PROMOTE_TAG}"
+          {
+            echo "## Promoted to :${PROMOTE_TAG}"
+            echo '```text'
+            echo "ref        : ${PUBLISH_REPO}:${PROMOTE_TAG}"
+            echo "digest ref : ${PUBLISH_REPO}@${DIGEST}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
