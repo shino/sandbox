@@ -55,34 +55,6 @@ jobs:
           go-version: "stable"
           cache: false
 
-      - name: Resolve guard settings
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          INPUT_FORCE: ${{ github.event.inputs.force }}
-          INPUT_DB_CHANGE_RATE_THRESHOLD: ${{ github.event.inputs.db_change_rate_threshold }}
-          INPUT_DETECTION_CHANGE_RATE_THRESHOLD: ${{ github.event.inputs.detection_change_rate_threshold }}
-        run: |
-          force=false
-          db_change_rate_threshold=10
-          detection_change_rate_threshold=5
-
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            if [[ "$INPUT_FORCE" == "true" ]]; then
-              force=true
-            fi
-            if [[ -n "$INPUT_DB_CHANGE_RATE_THRESHOLD" ]]; then
-              db_change_rate_threshold="$INPUT_DB_CHANGE_RATE_THRESHOLD"
-            fi
-            if [[ -n "$INPUT_DETECTION_CHANGE_RATE_THRESHOLD" ]]; then
-              detection_change_rate_threshold="$INPUT_DETECTION_CHANGE_RATE_THRESHOLD"
-            fi
-          fi
-
-          echo "FORCE=$force" >> "$GITHUB_ENV"
-          echo "DB_CHANGE_RATE_THRESHOLD=$db_change_rate_threshold" >> "$GITHUB_ENV"
-          echo "DETECTION_CHANGE_RATE_THRESHOLD=$detection_change_rate_threshold" >> "$GITHUB_ENV"
-
       - name: Install vuls2
         run: go install github.com/MaineK00n/vuls2/cmd/vuls@nightly
 
@@ -91,149 +63,24 @@ jobs:
       - name: Fetch target vuls.db (hand-picked historical DB)
         run: vuls db fetch --dbpath ./vuls.db --repository "$TARGET_REPOSITORY" --no-progress
 
-      # --- BEGIN: logic to paste between "Compact vuls.db" and "Upload vuls.db..." in db-nightly.yml ---
-
-      # Sanity-check strategy:
-      # - Run `vuls diff detection` and `vuls diff db` between baseline and target.
-      #   If either check fails the freshly built DB MUST NOT be published.
-      # - Start with detection against vuls0 master HEAD: a large detection
-      #   gap almost always means the DB should not ship.
-      # - Then re-run detection with a slightly older pinned vuls0 binary to
-      #   catch regressions that only show up against past vuls0 versions.
-      # - Run `vuls diff db` last. Structural changes to the extracted data can
-      #   legitimately inflate the raw DB diff even when detection is stable;
-      #   if detection shows near-zero change but only `diff db` fails, and the
-      #   cause is well understood, re-run this workflow with `force=true` to
-      #   proceed with the publish.
-
-      - name: Fetch baseline vuls.db (hand-picked historical DB)
-        if: ${{ env.FORCE != 'true' }}
-        run: vuls db fetch --dbpath ./baseline.db --repository "$BASELINE_REPOSITORY" --no-progress
-
-      - name: Install vuls0 (future-architect/vuls master)
-        if: ${{ env.FORCE != 'true' }}
-        run: |
-          mkdir -p /tmp/vuls0-bin
-          GOBIN=/tmp/vuls0-bin go install github.com/future-architect/vuls/cmd/vuls@master
-          mv /tmp/vuls0-bin/vuls /tmp/vuls0-bin/vuls0
-          echo "VULS0=/tmp/vuls0-bin/vuls0" >> "$GITHUB_ENV"
-
-          echo "## vuls0 under test (master HEAD)" >> "$GITHUB_STEP_SUMMARY"
-          echo '```text' >> "$GITHUB_STEP_SUMMARY"
-            printf '%s\n' "$(/tmp/vuls0-bin/vuls0 -version 2>&1 || true)" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-      # Pin vulsio/integration to a specific commit so scan-result fixtures used
-      # by `vuls diff detection` do not change independently of this repo. Update
-      # this SHA intentionally when refreshing fixtures.
-      - name: Check out vulsio/integration (pinned) for scan-result fixtures
-        if: ${{ env.FORCE != 'true' }}
+      # Check out this repo so the composite action at
+      # `.github/actions/diff-guard` is resolvable via `uses: ./...`.
+      - name: Check out repository (for composite action)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      # Expected to FAIL at the detection steps: the target DB contains a
+      # massive ubuntu-wide churn vs the baseline (peak ~745% on ubuntu:25.10),
+      # which trips detection-change-rate-threshold on both the master and the
+      # pinned older (9efad2a) vuls0 binaries.
+      - name: Run diff guard
+        if: ${{ github.event.inputs.force != 'true' }}
+        uses: ./.github/actions/diff-guard
         with:
-          repository: vulsio/integration
-          ref: 24c96d27ea0ead49ad8311d8c92d204fef5c58b4
-          path: integration
-
-      - name: Prepare scan results (vuls2-supported families only)
-        if: ${{ env.FORCE != 'true' }}
-        run: |
-          mkdir -p ./scan-results
-          # Copy all scan results then drop the ones excluded from this vuls2
-          # detection diff: Windows (handled by gost) and CentOS — see
-          # vuls/detector/detector.go DetectPkgCves switch.
-          cp ./integration/data/results/*.json ./scan-results/
-          rm -f ./scan-results/windows_*.json ./scan-results/centos_*.json
-          ls -1 ./scan-results
-
-          integration_sha=$(git -C ./integration rev-parse HEAD)
-          echo "## Scan-result fixtures source" >> "$GITHUB_STEP_SUMMARY"
-          echo "- vulsio/integration @ \`${integration_sha}\`" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Diff detection between baseline and target DBs
-        if: ${{ env.FORCE != 'true' }}
-        shell: bash
-        run: |
-          set +e
-          set -o pipefail
-          vuls diff detection \
-            ./scan-results \
-            ./baseline.db "$VULS0" \
-            ./vuls.db    "$VULS0" \
-            --change-rate-threshold "$DETECTION_CHANGE_RATE_THRESHOLD" \
-            | tee ./diff-detection-report.md
-          rc=$?
-          set -e
-
-          echo "---" >> "$GITHUB_STEP_SUMMARY"
-          echo "## Diff detection (vuls0 master HEAD)" >> "$GITHUB_STEP_SUMMARY"
-          head -n 100 ./diff-detection-report.md >> "$GITHUB_STEP_SUMMARY"
-          exit "$rc"
-
-      # Additional check with a slightly older vuls0 binary (pinned commit) to
-      # catch regressions that only surface against past vuls0 versions.
-      # Pinned to 9efad2a for the simulated ubuntu-regression scenario.
-      - name: Install vuls0 for older-binary check (pinned commit)
-        if: ${{ env.FORCE != 'true' }}
-        run: |
-          mkdir -p /tmp/vuls0-old-bin
-          GOBIN=/tmp/vuls0-old-bin go install github.com/future-architect/vuls/cmd/vuls@9efad2a
-          mv /tmp/vuls0-old-bin/vuls /tmp/vuls0-old-bin/vuls0-old
-          echo "VULS0_OLD=/tmp/vuls0-old-bin/vuls0-old" >> "$GITHUB_ENV"
-
-      - name: Prepare scan results for older-binary check (narrower family set)
-        if: ${{ env.FORCE != 'true' }}
-        run: |
-          mkdir -p ./scan-results-old
-          cp ./integration/data/results/*.json ./scan-results-old/
-          # Keep only families supported by the pinned older vuls0 binary:
-          # RedHat (rhel_*), Fedora, Alma, Rocky, Oracle, Alpine, Ubuntu.
-          find ./scan-results-old -maxdepth 1 -type f -name '*.json' \
-            ! -name 'rhel_*.json' \
-            ! -name 'fedora_*.json' \
-            ! -name 'alma_*.json' \
-            ! -name 'rocky_*.json' \
-            ! -name 'oracle_*.json' \
-            ! -name 'alpine_*.json' \
-            ! -name 'ubuntu_*.json' \
-            -delete
-          ls -1 ./scan-results-old
-
-      - name: Diff detection with older vuls0 binary (baseline vs target DB)
-        if: ${{ env.FORCE != 'true' }}
-        shell: bash
-        run: |
-          set +e
-          set -o pipefail
-          vuls diff detection \
-            ./scan-results-old \
-            ./baseline.db "$VULS0_OLD" \
-            ./vuls.db    "$VULS0_OLD" \
-            --change-rate-threshold "$DETECTION_CHANGE_RATE_THRESHOLD" \
-            | tee ./diff-detection-old-report.md
-          rc=$?
-          set -e
-
-          echo "---" >> "$GITHUB_STEP_SUMMARY"
-          echo "## Diff detection (older pinned vuls0 @9efad2a)" >> "$GITHUB_STEP_SUMMARY"
-          head -n 100 ./diff-detection-old-report.md >> "$GITHUB_STEP_SUMMARY"
-          exit "$rc"
-
-      - name: Diff vuls.db against baseline
-        if: ${{ env.FORCE != 'true' }}
-        run: |
-          set +e
-          vuls diff db ./baseline.db ./vuls.db \
-            --change-rate-threshold "$DB_CHANGE_RATE_THRESHOLD" \
-            | tee ./diff-report.md
-          rc=${PIPESTATUS[0]}
-          set -e
-
-          echo "---" >> "$GITHUB_STEP_SUMMARY"
-          echo "## Diff vuls.db" >> "$GITHUB_STEP_SUMMARY"
-          head -n 300 ./diff-report.md >> "$GITHUB_STEP_SUMMARY"
-          exit "$rc"
-
-      # --- END: logic to paste between "Compact vuls.db" and "Upload vuls.db..." in db-nightly.yml ---
+          target-db: ./vuls.db
+          baseline-repository: ${{ env.BASELINE_REPOSITORY }}
+          db-change-rate-threshold: ${{ github.event.inputs.db_change_rate_threshold || '10' }}
+          detection-change-rate-threshold: ${{ github.event.inputs.detection_change_rate_threshold || '5' }}
+          vuls0-old-ref: 9efad2a
 
       - name: Upload vuls.db to ghcr.io/vulsio/vuls-nightly-db (dummy for test)
         run: echo "dummy publish"
