@@ -63,8 +63,8 @@ jobs:
           go-version: "stable"
           cache: false
 
-      - name: Install vuls2
-        run: go install github.com/MaineK00n/vuls2/cmd/vuls@nightly
+      - name: Install vuls2 (MaineK00n/vuls2 @ shino/fix-diff-cmd)
+        run: go install github.com/MaineK00n/vuls2/cmd/vuls@shino/fix-diff-cmd
 
       # Stand-in for the freshly built ./vuls.db — fetch the hand-picked target
       # DB (expected to contain the simulated ubuntu regression).
