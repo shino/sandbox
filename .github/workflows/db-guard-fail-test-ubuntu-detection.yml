@@ -93,6 +93,14 @@ jobs:
           mv /tmp/vuls0-bin/vuls /tmp/vuls0-bin/vuls0
           echo "VULS0=/tmp/vuls0-bin/vuls0" >> "$GITHUB_ENV"
 
+          version_out=$(/tmp/vuls0-bin/vuls0 -version 2>&1 || true)
+          module_out=$(go version -m /tmp/vuls0-bin/vuls0 2>&1 || true)
+          echo "## vuls0 under test (master HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```text' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n\n' "$version_out" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$module_out" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
       # Pin vulsio/integration to a specific commit so scan-result fixtures used
       # by `vuls diff detection` do not change independently of this repo. Update
       # this SHA intentionally when refreshing fixtures.
@@ -132,6 +140,7 @@ jobs:
           rc=${PIPESTATUS[0]}
           set -e
 
+          echo "---" >> "$GITHUB_STEP_SUMMARY"
           echo "## Diff detection (vuls0 master HEAD)" >> "$GITHUB_STEP_SUMMARY"
           head -n 100 ./diff-detection-report.md >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
