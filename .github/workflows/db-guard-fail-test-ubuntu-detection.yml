@@ -24,11 +24,6 @@ on:
         description: "`vuls diff detection` change rate (%) threshold per scan result; diff fails if exceeded"
         required: false
         default: "5"
-      force:
-        description: "**DANGER** Skip diff checks and proceed regardless"
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -122,7 +117,6 @@ jobs:
       # which trips detection_change_rate_threshold on both the master and the
       # pinned older (9efad2a) vuls0 binaries.
       - name: Run diff guard
-        if: ${{ github.event.inputs.force != 'true' }}
         uses: ./.github/actions/diff-guard
         with:
           target_db: ./vuls.db
@@ -131,8 +125,8 @@ jobs:
           detection_change_rate_threshold: ${{ github.event.inputs.detection_change_rate_threshold || '5' }}
           vuls0_old_ref: 9efad2a
 
-      # Guard passed (or was skipped via force=true): attach :nightly to the
-      # verified digest. In this fail-test the guard is expected to fail, so
+      # Guard passed: attach :nightly to the verified digest. In this
+      # fail-test the guard is expected to fail, so
       # this step will normally be skipped and :nightly will remain untouched.
       - name: Promote digest to :nightly
         env:

@@ -13,11 +13,6 @@ on:
         description: "`vuls diff detection` change rate (%) threshold per scan result; diff fails if exceeded"
         required: false
         default: "5"
-      force:
-        description: "**DANGER** Skip diff checks and proceed regardless"
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -108,7 +103,6 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run diff guard
-        if: ${{ github.event.inputs.force != 'true' }}
         uses: ./.github/actions/diff-guard
         with:
           target_db: ./vuls.db
@@ -116,8 +110,8 @@ jobs:
           db_change_rate_threshold: ${{ github.event.inputs.db_change_rate_threshold || '10' }}
           detection_change_rate_threshold: ${{ github.event.inputs.detection_change_rate_threshold || '5' }}
 
-      # Guard passed (or was skipped via force=true): attach :nightly to the
-      # verified digest. The previously-tagged :nightly manifest becomes
+      # Guard passed: attach :nightly to the verified digest. The
+      # previously-tagged :nightly manifest becomes
       # untagged and remains reachable by digest within GHCR's retention window.
       - name: Promote digest to :nightly
         env:

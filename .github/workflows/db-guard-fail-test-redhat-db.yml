@@ -26,11 +26,6 @@ on:
         description: "`vuls diff detection` change rate (%) threshold per scan result; diff fails if exceeded"
         required: false
         default: "5"
-      force:
-        description: "**DANGER** Skip diff checks and proceed regardless"
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -124,7 +119,6 @@ jobs:
       # differ by ~65% on redhat:6 / ~57% on redhat:7. Detection is skipped
       # via the composite flag below.
       - name: Run diff guard
-        if: ${{ github.event.inputs.force != 'true' }}
         uses: ./.github/actions/diff-guard
         with:
           target_db: ./vuls.db
@@ -138,8 +132,8 @@ jobs:
           # failure path anyway, so skip detection entirely.
           skip_diff_detection: "true"
 
-      # Guard passed (or was skipped via force=true): attach :nightly to the
-      # verified digest. In this fail-test the guard is expected to fail, so
+      # Guard passed: attach :nightly to the verified digest. In this
+      # fail-test the guard is expected to fail, so
       # this step will normally be skipped and :nightly will remain untouched.
       - name: Promote digest to :nightly
         env:
