@@ -43,8 +43,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GOEXPERIMENT: jsonv2
-      # Branch refs like @nightly can lag by one commit via proxy.golang.org.
-      GONOPROXY: github.com/MaineK00n/vuls2
       # Historical vuls.db digests pinned to simulate a broken target DB.
       # Obtained via `vuls db search metadata --dbpath <daily>.db | jq -r .digest`.
       # Baseline: 2026-03-10 nightly-db. Target: 2026-03-11 nightly-db (contains
