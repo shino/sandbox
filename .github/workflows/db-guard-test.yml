@@ -54,7 +54,7 @@ jobs:
         # Pinned to the commit that introduced tagless `vuls db push`
         # (feat(db/push): support untagged push). Bump to @nightly once
         # released.
-        run: go install github.com/MaineK00n/vuls2/cmd/vuls@5d67300d80e0b831ed559e2c875959b3010ea026
+        run: go install github.com/MaineK00n/vuls2/cmd/vuls@2fb3a8539baf5486e51bb3098bdecb5fcf27d54c
 
       # vuls-data-update is used to move the :nightly tag (registry tag)
       # once the guard passes.
@@ -79,10 +79,10 @@ jobs:
       #
       # `vuls db push` accepts a tagless `<repository>` reference: the
       # manifest is pushed without any tag and only reachable by digest.
-      # It emits the digest via slog to stderr (e.g.
-      # `msg="pushed vuls db" ref=... digest=sha256:...`), so we capture
-      # stderr and parse the structured log line. This keeps stdout clean
-      # and consistent with the rest of vuls2's CLI surface.
+      # The resulting digest is written to stdout as a single
+      # `sha256:...` line, so we can capture it with command
+      # substitution. (The same digest is also emitted on stderr as a
+      # slog record for debuggability.)
       #
       # All subsequent operations reference `${PUBLISH_REPO}@<digest>`.
       # Even if the guard fails the untagged manifest remains pullable by
@@ -93,18 +93,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          log=$(mktemp)
-          # slog output goes to stderr; capture it while letting both
-          # streams reach the runner log for debuggability.
-          vuls db push --token "${GH_TOKEN}" "${PUBLISH_REPO}" ./vuls.db.zst \
-            > >(tee /dev/stderr) \
-            2> >(tee "${log}" >&2)
-          # Extract the digest from the "pushed vuls db" log record.
-          digest=$(grep -oE 'digest=sha256:[0-9a-f]+' "${log}" | tail -n1 | cut -d= -f2)
-          if [ -z "${digest}" ]; then
-            echo "failed to capture digest from vuls db push log" >&2
-            exit 1
-          fi
+          digest=$(vuls db push --token "${GH_TOKEN}" "${PUBLISH_REPO}" ./vuls.db.zst)
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
           {
             echo "## Pushed candidate image (untagged, digest-only)"
