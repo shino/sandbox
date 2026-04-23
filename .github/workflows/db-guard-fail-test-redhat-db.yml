@@ -45,6 +45,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GOEXPERIMENT: jsonv2
+      # Branch refs like @nightly can lag by one commit via proxy.golang.org.
+      GONOPROXY: github.com/MaineK00n/vuls2
       # Sandbox publish target. Production will point at ghcr.io/vulsio/vuls-nightly-db.
       PUBLISH_REPO: ghcr.io/shino/package-push-test1
       PROMOTE_TAG: nightly
