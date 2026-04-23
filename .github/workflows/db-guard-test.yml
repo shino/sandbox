@@ -89,11 +89,9 @@ jobs:
       # digest for investigation (within GHCR's retention window).
       - name: Push vuls.db to GHCR (tagless, digest-only)
         id: push
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          digest=$(vuls db push --token "${GH_TOKEN}" "${PUBLISH_REPO}" ./vuls.db.zst)
+          digest=$(vuls db push --token "${{ secrets.GITHUB_TOKEN }}" "${PUBLISH_REPO}" ./vuls.db.zst)
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
           {
             echo "## Pushed candidate image (untagged, digest-only)"
