@@ -81,8 +81,7 @@ jobs:
       # manifest is pushed without any tag and only reachable by digest.
       # The resulting digest is written to stdout as a single
       # `sha256:...` line, so we can capture it with command
-      # substitution. (The same digest is also emitted on stderr as a
-      # slog record for debuggability.)
+      # substitution.
       #
       # All subsequent operations reference `${PUBLISH_REPO}@<digest>`.
       # Even if the guard fails the untagged manifest remains pullable by
