@@ -68,10 +68,7 @@ jobs:
           cache: false
 
       - name: Install vuls2
-        # Pinned to the commit that introduced tagless `vuls db push`
-        # (feat(db/push): support untagged push). Bump to @nightly once
-        # released.
-        run: go install github.com/MaineK00n/vuls2/cmd/vuls@2fb3a8539baf5486e51bb3098bdecb5fcf27d54c
+        run: go install github.com/MaineK00n/vuls2/cmd/vuls@nightly
 
       # vuls-data-update is used to move the :nightly tag (registry tag)
       # once the guard passes.
