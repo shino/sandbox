@@ -34,10 +34,19 @@ jobs:
       GOEXPERIMENT: jsonv2
       # Branch refs like @nightly can lag by one commit via proxy.golang.org.
       GONOPROXY: github.com/MaineK00n/vuls2
-      # Sandbox publish target. Production will point at ghcr.io/vulsio/vuls-nightly-db.
-      PUBLISH_REPO: ghcr.io/shino/package-push-test1
-      PROMOTE_TAG: nightly
     steps:
+      - name: Maximize build space
+        uses: AdityaGarg8/remove-unwanted-software@90e01b21170618765a73370fcc3abbd1684a7793 # v5
+        with:
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+          remove-large-packages: "true"
+          remove-cached-tools: "true"
+          remove-swapfile: "true"
+
       # Check out this repo first so the composite action at
       # `.github/actions/diff-guard` is resolvable via `uses: ./...`.
       # NOTE: must precede any step that writes files to the workspace —
@@ -82,19 +91,19 @@ jobs:
       # `sha256:...` line, so we can capture it with command
       # substitution.
       #
-      # All subsequent operations reference `${PUBLISH_REPO}@<digest>`.
+      # All subsequent operations reference `ghcr.io/shino/package-push-test1@<digest>`.
       # Even if the guard fails the untagged manifest remains pullable by
       # digest for investigation (within GHCR's retention window).
       - name: Push vuls.db to GHCR (tagless, digest-only)
         id: push
         run: |
           set -euo pipefail
-          digest=$(vuls db push --token "${{ secrets.GITHUB_TOKEN }}" "${PUBLISH_REPO}" ./vuls.db.zst)
+          digest=$(vuls db push --token "${{ secrets.GITHUB_TOKEN }}" ghcr.io/shino/package-push-test1 ./vuls.db.zst)
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
           {
             echo "## Pushed candidate image (untagged, digest-only)"
             echo '```text'
-            echo "digest ref : ${PUBLISH_REPO}@${digest}"
+            echo "digest ref : ghcr.io/shino/package-push-test1@${digest}"
             echo '```'
             echo "Image is always pushed before the diff guard runs; a failing"
             echo "build stays pullable by digest for investigation."
@@ -104,10 +113,10 @@ jobs:
         if: ${{ github.event.inputs.force != 'true' }}
         uses: ./.github/actions/diff-guard
         with:
-          target-db: ./vuls.db
-          baseline-repository: ghcr.io/vulsio/vuls-nightly-db:nightly
-          db-change-rate-threshold: ${{ github.event.inputs.db_change_rate_threshold || '10' }}
-          detection-change-rate-threshold: ${{ github.event.inputs.detection_change_rate_threshold || '5' }}
+          target_db: ./vuls.db
+          baseline_repository: ghcr.io/vulsio/vuls-nightly-db:nightly
+          db_change_rate_threshold: ${{ github.event.inputs.db_change_rate_threshold || '10' }}
+          detection_change_rate_threshold: ${{ github.event.inputs.detection_change_rate_threshold || '5' }}
 
       # Guard passed (or was skipped via force=true): attach :nightly to the
       # verified digest. The previously-tagged :nightly manifest becomes
@@ -119,11 +128,11 @@ jobs:
           set -euo pipefail
           vuls-data-update dotgit registry tag \
             --token "${{ secrets.GITHUB_TOKEN }}" \
-            "${PUBLISH_REPO}@${DIGEST}" "${PROMOTE_TAG}"
+            "ghcr.io/shino/package-push-test1@${DIGEST}" nightly
           {
-            echo "## Promoted to :${PROMOTE_TAG}"
+            echo "## Promoted to :nightly"
             echo '```text'
-            echo "ref        : ${PUBLISH_REPO}:${PROMOTE_TAG}"
-            echo "digest ref : ${PUBLISH_REPO}@${DIGEST}"
+            echo "ref        : ghcr.io/shino/package-push-test1:nightly"
+            echo "digest ref : ghcr.io/shino/package-push-test1@${DIGEST}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
