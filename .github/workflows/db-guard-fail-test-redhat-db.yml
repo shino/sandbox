@@ -115,9 +115,15 @@ jobs:
             echo "build stays pullable by digest for investigation."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Expected to FAIL at the final `vuls diff db` step: baseline/target
-      # differ by ~65% on redhat:6 / ~57% on redhat:7. Detection is skipped
-      # via the composite flag below.
+      # Expected to FAIL: `vuls diff db` trips on the pinned baseline/target
+      # (~65% redhat:6, ~57% redhat:7). The pinned BASELINE/TARGET DBs
+      # (2026-03-03/04) also predate several OS families present in the
+      # fixture set so `vuls diff detection` is expected to crash; under the
+      # current diff-guard design every diff step swallows non-zero rc and
+      # records it as a step output, so all three steps still run and the
+      # final aggregation reports failures together. This scenario therefore
+      # exercises *both* the `vuls diff db` failure path AND the
+      # detection-crash-tolerance of the deferred-exit design.
       - name: Run diff guard
         uses: ./.github/actions/diff-guard
         with:
@@ -126,11 +132,6 @@ jobs:
           db_change_rate_threshold: ${{ github.event.inputs.db_change_rate_threshold || '10' }}
           detection_change_rate_threshold: ${{ github.event.inputs.detection_change_rate_threshold || '5' }}
           vuls0_old_ref: 9efad2a
-          # The pinned BASELINE/TARGET DBs (2026-03-03/04) predate several
-          # OS families present in the fixture set and `vuls diff detection`
-          # crashes on them. This scenario only exercises the `vuls diff db`
-          # failure path anyway, so skip detection entirely.
-          skip_diff_detection: "true"
 
       # Guard passed: attach :nightly to the verified digest. In this
       # fail-test the guard is expected to fail, so
