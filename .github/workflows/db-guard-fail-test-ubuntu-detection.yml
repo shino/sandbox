@@ -8,6 +8,15 @@ name: DB Guard Fail Test (simulated ubuntu regression)
 # (9efad2a), both the master and older-binary detection checks are expected to
 # FAIL, simulating an ubuntu regression landing in the nightly DB.
 #
+# This is configured as a **partial-failure** scenario (the mirror image
+# of db-guard-fail-test-redhat-db.yml):
+#   - both `vuls diff detection` steps FAIL (~745% ubuntu:25.10)
+#   - `vuls diff db` PASSES (10000% db threshold)
+# Expected aggregate: rc=(1,1,0), job FAILs, step summary keeps the two
+# failing detection reports plus the passing diff-db report side-by-side
+# — verifying the deferred-exit aggregation surfaces full triage
+# information rather than aborting at the first failure.
+#
 # The baseline/target digests are hardcoded as env vars (BASELINE_REPOSITORY /
 # TARGET_REPOSITORY) below.
 
@@ -17,9 +26,9 @@ on:
   workflow_dispatch:
     inputs:
       db_change_rate_threshold:
-        description: "`vuls diff db` change rate (%) threshold per ecosystem; diff fails if exceeded"
+        description: "`vuls diff db` change rate (%) threshold per ecosystem; diff fails if exceeded. Default 10000 here so `diff db` PASSES — this scenario is intentionally configured as a partial failure (only detection trips) to verify that the deferred-exit aggregation still surfaces the passing diff-db report."
         required: false
-        default: "10"
+        default: "10000"
       detection_change_rate_threshold:
         description: "`vuls diff detection` change rate (%) threshold per scan result; diff fails if exceeded"
         required: false
@@ -112,18 +121,29 @@ jobs:
             echo "build stays pullable by digest for investigation."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Expected to FAIL at the detection steps: the target DB contains a
-      # massive ubuntu-wide churn vs the baseline (peak ~745% on ubuntu:25.10),
-      # which trips detection_change_rate_threshold on both the master and the
-      # pinned older (9efad2a) vuls0 binaries.
+      # Partial-failure scenario: detection FAILs (~745% ubuntu:25.10) on
+      # both vuls0 master and the pinned older (9efad2a) binary, while
+      # `vuls diff db` PASSES thanks to a 10000% db threshold default.
+      # Expected aggregate: rc=(1,1,0) → job FAILs but the step summary
+      # keeps the passing diff-db report alongside the two failing
+      # detection reports.
+      #
+      # `integration_ref` is pinned to the older fixture commit
+      # 24c96d27ea0ead49ad8311d8c92d204fef5c58b4 because the pinned
+      # BASELINE/TARGET DBs (2026-03-10/11) predate OS families
+      # (ubuntu:26.04, debian:11) present in the current default fixture
+      # set; using the older fixtures lets `vuls diff detection` actually
+      # produce real reports against these historical DBs instead of
+      # crashing with `"<family>" not found`.
       - name: Run diff guard
         uses: ./.github/actions/diff-guard
         with:
           target_db: ./vuls.db
           baseline_repository: ${{ env.BASELINE_REPOSITORY }}
-          db_change_rate_threshold: ${{ github.event.inputs.db_change_rate_threshold || '10' }}
+          db_change_rate_threshold: ${{ github.event.inputs.db_change_rate_threshold || '10000' }}
           detection_change_rate_threshold: ${{ github.event.inputs.detection_change_rate_threshold || '5' }}
           vuls0_old_ref: 9efad2a
+          integration_ref: 24c96d27ea0ead49ad8311d8c92d204fef5c58b4
 
       # Guard passed: attach :nightly to the verified digest. In this
       # fail-test the guard is expected to fail, so

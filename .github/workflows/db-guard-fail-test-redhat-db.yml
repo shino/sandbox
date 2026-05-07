@@ -7,8 +7,13 @@ name: DB Guard Fail Test (simulated redhat diff-db failure)
 # redhat:4 2.5%. KB change rate is 0.0% for all ecosystems (pure
 # detection-side churn in the extracted data).
 #
-# `skip_diff_detection: true` is passed to the composite so only
-# `vuls diff db` runs — that is the failure path this scenario exercises.
+# This is configured as a **partial-failure** scenario:
+#   - `vuls diff db` FAILS (~65% redhat:6, ~57% redhat:7)
+#   - both `vuls diff detection` steps PASS (10000% detection threshold)
+# Expected aggregate: rc=(0,0,1), job FAILs, step summary keeps the two
+# passing detection reports plus the failing diff-db report side-by-side
+# — verifying the deferred-exit aggregation surfaces full triage
+# information rather than aborting at the first failure.
 #
 # The baseline/target digests are hardcoded as env vars (BASELINE_REPOSITORY /
 # TARGET_REPOSITORY) below.
@@ -23,9 +28,9 @@ on:
         required: false
         default: "10"
       detection_change_rate_threshold:
-        description: "`vuls diff detection` change rate (%) threshold per scan result; diff fails if exceeded"
+        description: "`vuls diff detection` change rate (%) threshold per scan result; diff fails if exceeded. Default 10000 here so detection PASSES — this scenario is intentionally configured as a partial failure (only `vuls diff db` trips) to verify that the deferred-exit aggregation still surfaces the passing detection reports."
         required: false
-        default: "5"
+        default: "10000"
 
 permissions:
   contents: read
@@ -115,23 +120,28 @@ jobs:
             echo "build stays pullable by digest for investigation."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Expected to FAIL: `vuls diff db` trips on the pinned baseline/target
-      # (~65% redhat:6, ~57% redhat:7). The pinned BASELINE/TARGET DBs
-      # (2026-03-03/04) also predate several OS families present in the
-      # fixture set so `vuls diff detection` is expected to crash; under the
-      # current diff-guard design every diff step swallows non-zero rc and
-      # records it as a step output, so all three steps still run and the
-      # final aggregation reports failures together. This scenario therefore
-      # exercises *both* the `vuls diff db` failure path AND the
-      # detection-crash-tolerance of the deferred-exit design.
+      # Partial-failure scenario: only `vuls diff db` trips (~65% redhat:6,
+      # ~57% redhat:7); both `vuls diff detection` steps PASS thanks to a
+      # 10000% detection threshold default. This exercises the
+      # deferred-exit aggregation: rc=(0,0,1) → job FAILs but the step
+      # summary keeps the two passing detection reports for triage.
+      #
+      # `integration_ref` is pinned to the older fixture commit
+      # 24c96d27ea0ead49ad8311d8c92d204fef5c58b4 because the pinned
+      # BASELINE/TARGET DBs (2026-03-03/04) predate OS families
+      # (ubuntu:26.04, debian:11) present in the current default fixture
+      # set; using the older fixtures lets `vuls diff detection` actually
+      # produce real reports against these historical DBs instead of
+      # crashing with `"<family>" not found`.
       - name: Run diff guard
         uses: ./.github/actions/diff-guard
         with:
           target_db: ./vuls.db
           baseline_repository: ${{ env.BASELINE_REPOSITORY }}
           db_change_rate_threshold: ${{ github.event.inputs.db_change_rate_threshold || '10' }}
-          detection_change_rate_threshold: ${{ github.event.inputs.detection_change_rate_threshold || '5' }}
+          detection_change_rate_threshold: ${{ github.event.inputs.detection_change_rate_threshold || '10000' }}
           vuls0_old_ref: 9efad2a
+          integration_ref: 24c96d27ea0ead49ad8311d8c92d204fef5c58b4
 
       # Guard passed: attach :nightly to the verified digest. In this
       # fail-test the guard is expected to fail, so
