@@ -1,0 +1,179 @@
+name: DB Guard Fail Test (synthetic MISSING via SIGKILL)
+
+# Sibling of db-guard-fail-test-redhat-db.yml etc. This workflow installs
+# a "vuls saboteur" wrapper between `vuls` install and the diff-guard
+# composite. The wrapper SIGKILLs its parent shell whenever `vuls` is
+# called with `./scan-results-old` in argv — exclusively matching the
+# diff-guard's "Diff detection with older vuls0 binary" step. That step's
+# bash dies before reaching `echo "rc=..." >> "$GITHUB_OUTPUT"`,
+# simulating a real-world signal-kill / runner abort.
+#
+# Expected outcome under the deferred-exit + `if: always()` design:
+#   - diff_detection_master: real vuls runs (baseline == target, no
+#     diff) → rc=0 → PASS in summary.
+#   - diff_detection_old: saboteur kills the step's shell → outputs.rc
+#     unset → reported as MISSING by the aggregator.
+#   - diff_db: real vuls runs → rc=0 → PASS.
+#   - aggregator: PASS / MISSING / PASS → exit 1 (MISSING treated as
+#     failure) → job fails → Promote step skipped.
+#
+# This e2e-verifies the documented "any single failure point cannot
+# hide the other two reports" guarantee against signal-kill, the most
+# adversarial abort path the design was hardened against.
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      db_change_rate_threshold:
+        description: "`vuls diff db` change rate (%) threshold per ecosystem; default 10000 so the live diff (baseline == target) always passes."
+        required: false
+        default: "10000"
+      detection_change_rate_threshold:
+        description: "`vuls diff detection` change rate (%) threshold per scan result; default 10000 so the master-binary detection always passes."
+        required: false
+        default: "10000"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build vuls.db
+    permissions:
+      contents: read
+      # packages:write required for pushing to GHCR and moving the :nightly tag.
+      packages: write
+    runs-on: ubuntu-latest
+    env:
+      GOEXPERIMENT: jsonv2
+    steps:
+      - name: Maximize build space
+        uses: AdityaGarg8/remove-unwanted-software@90e01b21170618765a73370fcc3abbd1684a7793 # v5
+        with:
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+          remove-large-packages: "true"
+          remove-cached-tools: "true"
+          remove-swapfile: "true"
+
+      - name: Check out repository (for composite action)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Go 1.x
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: "stable"
+          cache: false
+
+      - name: Install vuls2
+        run: go install github.com/MaineK00n/vuls2/cmd/vuls@nightly
+
+      - name: Install vuls-data-update
+        run: go install github.com/MaineK00n/vuls-data-update/cmd/vuls-data-update@nightly
+
+      # Stand-in for the freshly built ./vuls.db — fetch the current
+      # nightly DB so the live diff (baseline == target) passes cleanly.
+      - name: Fetch target vuls.db (current nightly)
+        run: vuls db fetch --dbpath ./vuls.db --repository ghcr.io/vulsio/vuls-nightly-db:nightly --no-progress
+
+      - name: Compress vuls.db (zstd)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq zstd
+          zstd -f -T0 ./vuls.db -o ./vuls.db.zst
+          ls -lh ./vuls.db ./vuls.db.zst
+
+      - name: Push vuls.db to GHCR (tagless, digest-only)
+        id: push
+        run: |
+          set -euo pipefail
+          digest=$(vuls db push --token "${{ secrets.GITHUB_TOKEN }}" ghcr.io/shino/package-push-test1 ./vuls.db.zst)
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Pushed candidate image (untagged, digest-only)"
+            echo '```text'
+            echo "digest ref : ghcr.io/shino/package-push-test1@${digest}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Install the saboteur AFTER all `vuls` calls in this outer
+      # workflow have completed (db fetch, push). From here on `vuls` is
+      # the wrapper script; it transparently exec's the real binary
+      # except when the older-binary diff detection's marker arg is
+      # present, in which case it SIGKILLs the shell that invoked it.
+      - name: Install vuls saboteur (SIGKILL on `vuls diff detection ./scan-results-old`)
+        run: |
+          set -euo pipefail
+          real=$(command -v vuls)
+          mv "$real" "${real}.real"
+          cat > "$real" <<'SABOTEUR'
+          #!/bin/bash
+          # Sabotage exclusively the diff-guard composite's "Diff detection
+          # with older vuls0 binary" call, which uniquely passes
+          # `./scan-results-old` as one of argv. Pass through everything
+          # else (vuls install/setup invocations, master-binary detection,
+          # `vuls diff db`) to the real binary.
+          for arg in "$@"; do
+            if [ "$arg" = "./scan-results-old" ]; then
+              kill -KILL "$PPID"
+              # Unreachable in practice (the kernel will reap us shortly
+              # after the parent shell dies); explicit exit prevents
+              # accidental fall-through to the `exec` line below.
+              exit 137
+            fi
+          done
+          exec /home/runner/go/bin/vuls.real "$@"
+          SABOTEUR
+          chmod +x "$real"
+          ls -l "$real" "${real}.real"
+
+      # Expected to FAIL via MISSING: the saboteur kills the older-binary
+      # detection step's shell before it can record its rc. The
+      # aggregator (which carries `if: ${{ always() }}`) renders the
+      # MISSING slot as such in the summary table and exits 1.
+      - name: Run diff guard
+        uses: ./.github/actions/diff-guard
+        with:
+          target_db: ./vuls.db
+          baseline_repository: ghcr.io/vulsio/vuls-nightly-db:nightly
+          db_change_rate_threshold: ${{ github.event.inputs.db_change_rate_threshold || '10000' }}
+          detection_change_rate_threshold: ${{ github.event.inputs.detection_change_rate_threshold || '10000' }}
+
+      # Restore the real `vuls` so this step (and any future ones) work
+      # against the genuine binary again. Runs unconditionally so even
+      # when the diff guard fails (the expected outcome) the runner
+      # state is left tidy.
+      - name: Uninstall vuls saboteur
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          real=$(command -v vuls)
+          if [ -e "${real}.real" ]; then
+            mv -f "${real}.real" "${real}"
+          fi
+
+      # Should be skipped: the diff guard MISSING'd one slot which the
+      # aggregator turns into exit 1, failing the surrounding step. The
+      # composite action's failure here means the outer Promote step is
+      # gated off and :nightly stays untouched, which is the correct
+      # behaviour we want to verify.
+      - name: Promote digest to :nightly (expected to be skipped)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          vuls-data-update dotgit registry tag \
+            --token "${{ secrets.GITHUB_TOKEN }}" \
+            "ghcr.io/shino/package-push-test1@${DIGEST}" nightly
+          {
+            echo "## Promoted to :nightly"
+            echo '```text'
+            echo "ref        : ghcr.io/shino/package-push-test1:nightly"
+            echo "digest ref : ghcr.io/shino/package-push-test1@${DIGEST}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
