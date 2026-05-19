@@ -38,22 +38,20 @@ on:
       detection_change_rate_threshold_overrides:
         description: |
           Per-scan-result-file overrides of `vuls diff detection`
-          threshold. Default relaxes a generous set of ubuntu_<release>
-          basenames for the pinned 2026-03-10→11 scenario; extra entries
-          for non-existent files are harmless (vuls2 logs a stale-entry
-          warning instead of failing).
+          threshold. vuls0 emits basenames in 4-digit no-dot form
+          (`ubuntu_2204`, NOT `ubuntu_22.04`), so the keys below must
+          match that shape. The pinned `integration_ref` fixture set
+          only carries ubuntu 14.04–22.04; newer releases aren't
+          present, so listing them would just generate a stale-entry
+          warning.
         required: false
         type: string
         default: |
-          ubuntu_25.10=1000
-          ubuntu_25.04=1000
-          ubuntu_24.10=1000
-          ubuntu_24.04=1000
-          ubuntu_23.10=1000
-          ubuntu_23.04=1000
-          ubuntu_22.04=1000
-          ubuntu_20.04=1000
-          ubuntu_18.04=1000
+          ubuntu_1404=1000
+          ubuntu_1604=1000
+          ubuntu_1804=1000
+          ubuntu_2004=1000
+          ubuntu_2204=1000
 
 permissions:
   contents: read
@@ -130,19 +128,16 @@ jobs:
             echo "build stays pullable by digest for investigation."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Same scenario as db-guard-fail-test-ubuntu-detection.yml (~745%
-      # ubuntu:25.10 detection drift; all ubuntu releases trip) but with
-      # ubuntu_* scan-result files overridden → both `vuls diff detection`
-      # steps (master HEAD + older binary) are expected to PASS, completing
-      # the end-to-end override path demo.
-      #
-      # `vuls0_old_ref` is set to `master` (not 9efad2a like the fail
-      # test) so both binaries are master HEAD. Reason: vuls0 changed its
-      # scan-result file basename format between 9efad2a (2026-03-02:
-      # "ubuntu_2204") and master HEAD ("ubuntu_22.04"). The override
-      # list below uses the dot form. Using master for both binaries
-      # keeps the override keys consistent. The override test is not
-      # exercising master/older regression detection.
+      # Same scenario and pinned binaries as
+      # db-guard-fail-test-ubuntu-detection.yml (9efad2a older vuls0
+      # produces 100-858% drift across ubuntu_1404..ubuntu_2204 on the
+      # 2026-03-10→11 DBs), but with `detection_change_rate_threshold_overrides`
+      # set high enough on each ubuntu basename that the
+      # `Diff detection (older pinned vuls0 @9efad2a)` step PASSES
+      # instead of failing. The master HEAD step naturally passes
+      # because newer vuls0 normalizes ubuntu detection to <1% drift
+      # on these DBs — it does not exercise the override but its rc=0
+      # is required for the aggregate.
       - name: Run diff guard
         uses: ./.github/actions/diff-guard
         with:
@@ -152,7 +147,7 @@ jobs:
           db_change_rate_threshold_overrides: ${{ github.event.inputs.db_change_rate_threshold_overrides || '' }}
           detection_change_rate_threshold: ${{ github.event.inputs.detection_change_rate_threshold || '5' }}
           detection_change_rate_threshold_overrides: ${{ github.event.inputs.detection_change_rate_threshold_overrides || '' }}
-          vuls0_old_ref: master
+          vuls0_old_ref: 9efad2a
           integration_ref: 24c96d27ea0ead49ad8311d8c92d204fef5c58b4
 
       # Guard expected to PASS in this scenario thanks to the overrides.
