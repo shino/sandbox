@@ -100,7 +100,7 @@ jobs:
       # Once #371 merges and a vuls2 nightly with the flag is published,
       # revert to `@nightly`.
       - name: Install vuls2
-        run: go install github.com/MaineK00n/vuls2/cmd/vuls@c5865c6b6e3ae6ffe3ef1e2d74ec83e90fafd13c
+        run: go install github.com/MaineK00n/vuls2/cmd/vuls@4760b41e6306a87445f2fcbe5db969112b1f8d2f
 
       - name: Install vuls-data-update
         run: go install github.com/MaineK00n/vuls-data-update/cmd/vuls-data-update@main
@@ -135,6 +135,14 @@ jobs:
       # ubuntu_* scan-result files overridden → both `vuls diff detection`
       # steps (master HEAD + older binary) are expected to PASS, completing
       # the end-to-end override path demo.
+      #
+      # `vuls0_old_ref` is set to `master` (not 9efad2a like the fail
+      # test) so both binaries are master HEAD. Reason: vuls0 changed its
+      # scan-result file basename format between 9efad2a (2026-03-02:
+      # "ubuntu_2204") and master HEAD ("ubuntu_22.04"). The override
+      # list below uses the dot form. Using master for both binaries
+      # keeps the override keys consistent. The override test is not
+      # exercising master/older regression detection.
       - name: Run diff guard
         uses: ./.github/actions/diff-guard
         with:
@@ -144,7 +152,7 @@ jobs:
           db_change_rate_threshold_overrides: ${{ github.event.inputs.db_change_rate_threshold_overrides || '' }}
           detection_change_rate_threshold: ${{ github.event.inputs.detection_change_rate_threshold || '5' }}
           detection_change_rate_threshold_overrides: ${{ github.event.inputs.detection_change_rate_threshold_overrides || '' }}
-          vuls0_old_ref: 9efad2a
+          vuls0_old_ref: master
           integration_ref: 24c96d27ea0ead49ad8311d8c92d204fef5c58b4
 
       # Guard expected to PASS in this scenario thanks to the overrides.
