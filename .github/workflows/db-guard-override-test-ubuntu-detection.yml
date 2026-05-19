@@ -1,0 +1,165 @@
+name: DB Guard Override Test (ubuntu detection, relaxed via overrides)
+
+# Sibling of db-guard-fail-test-ubuntu-detection.yml — same pinned
+# BASELINE/TARGET digests (2026-03-10 → 2026-03-11 nightly-db; all ubuntu
+# releases FAIL detection diff, peak ~745% on ubuntu:25.10), but with
+# `detection_change_rate_threshold_overrides` set high enough on each
+# ubuntu scan-result file that BOTH `vuls diff detection` steps (master
+# HEAD + pinned older vuls0) PASS instead of failing. Verifies the
+# detection override path end-to-end.
+#
+# Expected aggregate: rc=(0,0,0), job PASSES. Step summary should show
+# `*` markers next to each overridden ubuntu_<release> entry (vuls2 emits
+# this marker when an override was applied) plus the override footnote.
+#
+# Unrecognized override keys are tolerated — vuls2 emits a "stale entry"
+# warning rather than failing — so the generous default list below stays
+# valid even when integration_ref's fixture set is missing some ubuntu
+# releases.
+#
+# workflow_dispatch only — additive validation; no schedule.
+
+on:
+  workflow_dispatch:
+    inputs:
+      db_change_rate_threshold:
+        description: "`vuls diff db` change rate (%) threshold per ecosystem. Default 10000 here so `diff db` PASSES (this scenario isolates detection-side override behavior)."
+        required: false
+        default: "10000"
+      db_change_rate_threshold_overrides:
+        description: "Per-ecosystem overrides of `vuls diff db` threshold (unused in this scenario)."
+        required: false
+        type: string
+        default: ""
+      detection_change_rate_threshold:
+        description: "`vuls diff detection` default change rate (%) threshold per scan result; ubuntu_* files are relaxed via _overrides below."
+        required: false
+        default: "5"
+      detection_change_rate_threshold_overrides:
+        description: |
+          Per-scan-result-file overrides of `vuls diff detection`
+          threshold. Default relaxes a generous set of ubuntu_<release>
+          basenames for the pinned 2026-03-10→11 scenario; extra entries
+          for non-existent files are harmless (vuls2 logs a stale-entry
+          warning instead of failing).
+        required: false
+        type: string
+        default: |
+          ubuntu_25.10=1000
+          ubuntu_25.04=1000
+          ubuntu_24.10=1000
+          ubuntu_24.04=1000
+          ubuntu_23.10=1000
+          ubuntu_23.04=1000
+          ubuntu_22.04=1000
+          ubuntu_20.04=1000
+          ubuntu_18.04=1000
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build vuls.db
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-latest
+    env:
+      GOEXPERIMENT: jsonv2
+      # Historical vuls.db digests pinned to the ubuntu regression scenario
+      # used by db-guard-fail-test-ubuntu-detection.yml — kept identical
+      # so the only difference between the two workflows is the override
+      # input.
+      BASELINE_REPOSITORY: ghcr.io/vulsio/vuls-nightly-db@sha256:eab4b15e4db3700fa233bd5bc1e4dec87f3c0a71ad840f077897d527e4623f39
+      TARGET_REPOSITORY: ghcr.io/vulsio/vuls-nightly-db@sha256:432808a4dfbea5d7b5be411f60d4af9d23c68a414235349eecfa92009d3d5f1a
+    steps:
+      - name: Maximize build space
+        uses: AdityaGarg8/remove-unwanted-software@90e01b21170618765a73370fcc3abbd1684a7793 # v5
+        with:
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+          remove-large-packages: "true"
+          remove-cached-tools: "true"
+          remove-swapfile: "true"
+
+      - name: Check out repository (for composite action)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Go 1.x
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: "stable"
+          cache: false
+
+      # Pinned to the head of MaineK00n/vuls2 PR #371 (which ships the
+      # `--change-rate-threshold-override` CLI flag this test depends on).
+      # Once #371 merges and a vuls2 nightly with the flag is published,
+      # revert to `@nightly`.
+      - name: Install vuls2
+        run: go install github.com/MaineK00n/vuls2/cmd/vuls@c5865c6b6e3ae6ffe3ef1e2d74ec83e90fafd13c
+
+      - name: Install vuls-data-update
+        run: go install github.com/MaineK00n/vuls-data-update/cmd/vuls-data-update@main
+
+      - name: Fetch target vuls.db (hand-picked historical DB)
+        run: vuls db fetch --dbpath ./vuls.db --repository "$TARGET_REPOSITORY" --no-progress
+
+      - name: Compress vuls.db (zstd)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq zstd
+          zstd -f -T0 ./vuls.db -o ./vuls.db.zst
+          ls -lh ./vuls.db ./vuls.db.zst
+
+      - name: Push vuls.db to GHCR (tagless, digest-only)
+        id: push
+        run: |
+          set -euo pipefail
+          digest=$(vuls db push --token "${{ secrets.GITHUB_TOKEN }}" ghcr.io/shino/package-push-test1 ./vuls.db.zst)
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Pushed candidate image (untagged, digest-only)"
+            echo '```text'
+            echo "digest ref : ghcr.io/shino/package-push-test1@${digest}"
+            echo '```'
+            echo "Image is always pushed before the diff guard runs; a failing"
+            echo "build stays pullable by digest for investigation."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Same scenario as db-guard-fail-test-ubuntu-detection.yml (~745%
+      # ubuntu:25.10 detection drift; all ubuntu releases trip) but with
+      # ubuntu_* scan-result files overridden → both `vuls diff detection`
+      # steps (master HEAD + older binary) are expected to PASS, completing
+      # the end-to-end override path demo.
+      - name: Run diff guard
+        uses: ./.github/actions/diff-guard
+        with:
+          target_db: ./vuls.db
+          baseline_repository: ${{ env.BASELINE_REPOSITORY }}
+          db_change_rate_threshold: ${{ github.event.inputs.db_change_rate_threshold || '10000' }}
+          db_change_rate_threshold_overrides: ${{ github.event.inputs.db_change_rate_threshold_overrides || '' }}
+          detection_change_rate_threshold: ${{ github.event.inputs.detection_change_rate_threshold || '5' }}
+          detection_change_rate_threshold_overrides: ${{ github.event.inputs.detection_change_rate_threshold_overrides || '' }}
+          vuls0_old_ref: 9efad2a
+          integration_ref: 24c96d27ea0ead49ad8311d8c92d204fef5c58b4
+
+      # Guard expected to PASS in this scenario thanks to the overrides.
+      - name: Promote digest to :nightly
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          vuls-data-update dotgit registry tag \
+            --token "${{ secrets.GITHUB_TOKEN }}" \
+            "ghcr.io/shino/package-push-test1@${DIGEST}" nightly
+          {
+            echo "## Promoted to :nightly"
+            echo '```text'
+            echo "ref        : ghcr.io/shino/package-push-test1:nightly"
+            echo "digest ref : ghcr.io/shino/package-push-test1@${DIGEST}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
