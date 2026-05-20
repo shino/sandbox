@@ -1,8 +1,6 @@
 name: DB Guard Test
 
 on:
-  schedule:
-    - cron: "0 */6 * * *"
   workflow_dispatch:
     inputs:
       db_change_rate_threshold:

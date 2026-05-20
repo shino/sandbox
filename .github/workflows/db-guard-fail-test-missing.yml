@@ -22,8 +22,6 @@ name: DB Guard Fail Test (synthetic MISSING via SIGKILL)
 # adversarial abort path the design was hardened against.
 
 on:
-  schedule:
-    - cron: "0 */6 * * *"
   workflow_dispatch:
     inputs:
       db_change_rate_threshold:
