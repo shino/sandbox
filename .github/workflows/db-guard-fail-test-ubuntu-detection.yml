@@ -2,19 +2,22 @@ name: DB Guard Fail Test (simulated ubuntu regression)
 
 # Sibling of db-guard-test.yml. Instead of fetching the current nightly DB for
 # both baseline and target, this workflow pins two historical DB digests from
-# ghcr.io/vulsio/vuls-nightly-db that are known to contain a massive ubuntu-wide
-# churn (all ubuntu releases FAIL, peak ~745% on ubuntu:25.10) between
-# 2026-03-10 and 2026-03-11. Combined with a pinned older vuls0 binary
-# (9efad2a), both the master and older-binary detection checks are expected to
-# FAIL, simulating an ubuntu regression landing in the nightly DB.
+# ghcr.io/vulsio/vuls-nightly-db that contain a massive ubuntu-wide churn
+# between 2026-03-10 and 2026-03-11. Run against the pinned older vuls0 binary
+# (9efad2a) that churn surfaces as a huge detection diff, simulating an ubuntu
+# regression landing in the nightly DB.
 #
 # This is configured as a **partial-failure** scenario (the mirror image
 # of db-guard-fail-test-redhat-db.yml):
-#   - both `vuls diff detection` steps FAIL (~745% ubuntu:25.10)
+#   - `vuls diff detection` against the pinned older vuls0 FAILs
+#   - `vuls diff detection` against vuls0 master HEAD PASSES — current
+#     master-HEAD vuls0 normalizes this ubuntu detection to <1% drift, so
+#     only the older-binary check still sees the regression
 #   - `vuls diff db` PASSES (10000% db threshold)
-# Expected aggregate: rc=(1,1,0), job FAILs, step summary keeps the two
-# failing detection reports plus the passing diff-db report side-by-side
-# — verifying the deferred-exit aggregation surfaces full triage
+# Expected aggregate: rc=(0,1,0), job FAILs, step summary keeps the
+# passing master-HEAD detection report, the failing older-binary
+# detection report, and the passing diff-db report side-by-side —
+# verifying the deferred-exit aggregation surfaces full triage
 # information rather than aborting at the first failure.
 #
 # The baseline/target digests are hardcoded as env vars (BASELINE_REPOSITORY /
@@ -119,12 +122,13 @@ jobs:
             echo "build stays pullable by digest for investigation."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Partial-failure scenario: detection FAILs (~745% ubuntu:25.10) on
-      # both vuls0 master and the pinned older (9efad2a) binary, while
+      # Partial-failure scenario: the older-binary (9efad2a) detection
+      # FAILs on the ubuntu churn while the master-HEAD detection PASSES
+      # (current master vuls0 normalizes it to <1% drift), and
       # `vuls diff db` PASSES thanks to a 10000% db threshold default.
-      # Expected aggregate: rc=(1,1,0) → job FAILs but the step summary
-      # keeps the passing diff-db report alongside the two failing
-      # detection reports.
+      # Expected aggregate: rc=(0,1,0) → job FAILs but the step summary
+      # keeps the passing master-HEAD detection report and the passing
+      # diff-db report alongside the failing older-binary detection report.
       #
       # `integration_ref` is pinned to the older fixture commit
       # 24c96d27ea0ead49ad8311d8c92d204fef5c58b4 because the pinned

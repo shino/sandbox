@@ -1,20 +1,23 @@
 name: DB Guard Override Test (ubuntu detection, relaxed via overrides)
 
 # Sibling of db-guard-fail-test-ubuntu-detection.yml — same pinned
-# BASELINE/TARGET digests (2026-03-10 → 2026-03-11 nightly-db; all ubuntu
-# releases FAIL detection diff, peak ~745% on ubuntu:25.10), but with
-# `detection_change_rate_threshold_overrides` set high enough on each
-# ubuntu scan-result file that BOTH `vuls diff detection` steps (master
-# HEAD + pinned older vuls0) PASS instead of failing. Verifies the
-# detection override path end-to-end.
+# BASELINE/TARGET digests (2026-03-10 → 2026-03-11 nightly-db) with the
+# ubuntu-wide churn. In the fail-test that churn makes the older-binary
+# `vuls diff detection` step FAIL; here `detection_change_rate_threshold_overrides`
+# relaxes each ubuntu scan-result file enough that the step PASSES
+# instead. (The master-HEAD detection step passes on its own — current
+# master vuls0 normalizes this ubuntu detection to <1% drift — so it
+# does not exercise the override but its rc=0 is needed for the
+# aggregate.) Verifies the detection override path end-to-end.
 #
-# Expected aggregate: rc=(0,0,0), job PASSES. Step summary should show
-# `*` markers next to each overridden ubuntu_<release> entry (vuls2 emits
-# this marker when an override was applied) plus the override footnote.
+# Expected aggregate: rc=(0,0,0), job PASSES. Each diff report's summary
+# table carries a per-row Threshold column; overridden ubuntu_<release>
+# rows show their relaxed threshold value there.
 #
-# Unrecognized override keys are tolerated — vuls2 emits a "stale entry"
-# warning rather than failing — so the generous default list below stays
-# valid even when integration_ref's fixture set is missing some ubuntu
+# Unrecognized override keys are tolerated — vuls2 silently ignores an
+# override key that matches no scan-result file (the file just keeps the
+# default threshold) — so the generous default list below stays valid
+# even when integration_ref's fixture set is missing some ubuntu
 # releases.
 #
 # workflow_dispatch only — additive validation; no schedule.
@@ -93,12 +96,8 @@ jobs:
           go-version: "stable"
           cache: false
 
-      # Pinned to the head of MaineK00n/vuls2 PR #371 (which ships the
-      # `--change-rate-threshold-override` CLI flag this test depends on).
-      # Once #371 merges and a vuls2 nightly with the flag is published,
-      # revert to `@nightly`.
       - name: Install vuls2
-        run: go install github.com/MaineK00n/vuls2/cmd/vuls@4760b41e6306a87445f2fcbe5db969112b1f8d2f
+        run: go install github.com/MaineK00n/vuls2/cmd/vuls@nightly
 
       - name: Install vuls-data-update
         run: go install github.com/MaineK00n/vuls-data-update/cmd/vuls-data-update@main
