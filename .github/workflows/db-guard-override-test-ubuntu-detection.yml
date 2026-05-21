@@ -16,11 +16,14 @@ name: DB Guard Override Test (ubuntu detection, relaxed via overrides)
 #
 # Unrecognized override keys are tolerated — vuls2 silently ignores an
 # override key that matches no scan-result file (the file just keeps the
-# default threshold) — so the generous default list below stays valid
-# even when integration_ref's fixture set is missing some ubuntu
-# releases.
+# default threshold) — so the generous env list below stays valid even
+# when integration_ref's fixture set is missing some ubuntu releases.
 #
-# workflow_dispatch only — additive validation; no schedule.
+# The persistent overrides live in the build job's env (mirroring
+# db-nightly.yml). Dispatching with the _overrides input left blank
+# exercises the same `|| env.X` fallback a non-dispatch (schedule)
+# event takes, so a plain workflow_dispatch verifies the scheduled-run
+# path without waiting on cron.
 
 on:
   workflow_dispatch:
@@ -41,20 +44,13 @@ on:
       detection_change_rate_threshold_overrides:
         description: |
           Per-scan-result-file overrides of `vuls diff detection`
-          threshold. vuls0 emits basenames in 4-digit no-dot form
-          (`ubuntu_2204`, NOT `ubuntu_22.04`), so the keys below must
-          match that shape. The pinned `integration_ref` fixture set
-          only carries ubuntu 14.04–22.04; newer releases aren't
-          present, so listing them would just generate a stale-entry
-          warning.
+          threshold, as multi-line "<file-basename>=<rate>" entries.
+          Leave empty to use the persistent list in the build job's
+          DETECTION_CHANGE_RATE_THRESHOLD_OVERRIDES env; a non-empty
+          value here replaces it for this dispatch only.
         required: false
         type: string
-        default: |
-          ubuntu_1404=1000
-          ubuntu_1604=1000
-          ubuntu_1804=1000
-          ubuntu_2004=1000
-          ubuntu_2204=1000
+        default: ""
 
 permissions:
   contents: read
@@ -74,6 +70,21 @@ jobs:
       # input.
       BASELINE_REPOSITORY: ghcr.io/vulsio/vuls-nightly-db@sha256:eab4b15e4db3700fa233bd5bc1e4dec87f3c0a71ad840f077897d527e4623f39
       TARGET_REPOSITORY: ghcr.io/vulsio/vuls-nightly-db@sha256:432808a4dfbea5d7b5be411f60d4af9d23c68a414235349eecfa92009d3d5f1a
+      # Persistent detection-threshold overrides — single source of truth,
+      # applied to scheduled and manually-dispatched runs alike (mirrors
+      # db-nightly.yml). workflow_dispatch input defaults are NOT visible
+      # to non-dispatch events, so the `Run diff guard` step falls back to
+      # this env value. vuls0 emits basenames in 4-digit no-dot form
+      # (`ubuntu_2204`, NOT `ubuntu_22.04`), so the keys match that shape;
+      # the pinned `integration_ref` fixture set only carries ubuntu
+      # 14.04–22.04. `1000` relaxes each file far past the 100–858% drift
+      # the older pinned vuls0 produces, so the detection step PASSES.
+      DETECTION_CHANGE_RATE_THRESHOLD_OVERRIDES: |
+        ubuntu_1404=1000
+        ubuntu_1604=1000
+        ubuntu_1804=1000
+        ubuntu_2004=1000
+        ubuntu_2204=1000
     steps:
       - name: Maximize build space
         uses: AdityaGarg8/remove-unwanted-software@90e01b21170618765a73370fcc3abbd1684a7793 # v5
@@ -145,7 +156,7 @@ jobs:
           db_change_rate_threshold: ${{ github.event.inputs.db_change_rate_threshold || '10000' }}
           db_change_rate_threshold_overrides: ${{ github.event.inputs.db_change_rate_threshold_overrides || '' }}
           detection_change_rate_threshold: ${{ github.event.inputs.detection_change_rate_threshold || '5' }}
-          detection_change_rate_threshold_overrides: ${{ github.event.inputs.detection_change_rate_threshold_overrides || '' }}
+          detection_change_rate_threshold_overrides: ${{ github.event.inputs.detection_change_rate_threshold_overrides || env.DETECTION_CHANGE_RATE_THRESHOLD_OVERRIDES }}
           vuls0_old_ref: 9efad2a
           integration_ref: 24c96d27ea0ead49ad8311d8c92d204fef5c58b4
 
